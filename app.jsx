@@ -45,6 +45,14 @@ function reducer(state, action) {
       }
       return { ...state, monthlyAttendance: newMonthly };
     }
+    case 'SAVE_ATTENDANCE_DAY': {
+      const { date, records } = action.payload;
+      return {
+        ...state,
+        monthlyAttendance: { ...state.monthlyAttendance, [date]: { ...(state.monthlyAttendance[date] || {}), ...records } },
+        attendance: date === state.selectedAttendanceDate ? { ...state.attendance, ...records } : state.attendance,
+      };
+    }
     case 'UPDATE_MONTHLY_ATTENDANCE': {
       const { date, studentId, status, id } = action.payload;
       const dateRecords = state.monthlyAttendance[date] || {};
@@ -243,6 +251,7 @@ function AppProvider({ children }) {
   }, [state.students, state.monthlyAttendance]);
 
   const loadMonthlyAttendanceFunc = useCallback(() => {}, []);
+  const saveAttendanceDayFunc = (date, records) => dispatch({ type: 'SAVE_ATTENDANCE_DAY', payload: { date, records } });
 
   const addStudentRecordFunc = (studentId, type, content, category = '') => {
     const date = toISODate(new Date());
@@ -301,7 +310,7 @@ function AppProvider({ children }) {
   const value = {
     state, dispatch, showToast,
     updatePoints: updatePointsFunc, resetPoints: resetPointsFunc,
-    updateAttendance: updateAttendanceFunc, loadAttendanceByDate: loadAttendanceByDateFunc, loadMonthlyAttendance: loadMonthlyAttendanceFunc,
+    updateAttendance: updateAttendanceFunc, loadAttendanceByDate: loadAttendanceByDateFunc, loadMonthlyAttendance: loadMonthlyAttendanceFunc, saveAttendanceDay: saveAttendanceDayFunc,
     updateStudent: updateStudentFunc, bulkUpdateStudents: bulkUpdateStudentsFunc, addStudentRecord: addStudentRecordFunc, deleteStudentRecord: deleteStudentRecordFunc,
     saveWeeklyPlan, updateSettings: updateSettingsFunc, addDDay, deleteDDay: deleteDDayFunc,
     votePoll: votePollFunc, collectNewsletter: collectNewsletterFunc,
@@ -762,7 +771,7 @@ function DashboardGrid({ layout, editing, onChange, widgets }) {
 /* ===================================================================
    DashboardPage
    =================================================================== */
-const PERIOD_SLOTS = { 1: [540, 580], 2: [590, 630], 3: [640, 680], 4: [690, 730], 5: [790, 830], 6: [840, 880] };
+const PERIOD_SLOTS = { 1: [540, 580], 2: [590, 630], 3: [650, 690], 4: [750, 790], 5: [790, 830], 6: [840, 880] };
 const minToClock = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
 function DashboardPage() {
@@ -1439,20 +1448,42 @@ function StudentsPage() {
 /* ===================================================================
    AttendancePage
    =================================================================== */
-const STATUS_MAP = { present: { label: '출석', icon: '✅', color: 'present' }, absent: { label: '결석', icon: '❌', color: 'absent' }, late: { label: '지각', icon: '⏰', color: 'late' }, 'early-leave': { label: '조퇴', icon: '🏃', color: 'early-leave' } };
+const STATUS_MAP = { present: { label: '출석', mark: '○' }, absent: { label: '결석', mark: '✕' }, late: { label: '지각', mark: '△' }, 'early-leave': { label: '조퇴', mark: '▽' } };
+const STATUS_KEYS = Object.keys(STATUS_MAP);
+const sameAtt = (a, b) => (a?.status || 'present') === (b?.status || 'present') && (a?.note || '') === (b?.note || '');
 
 function AttendancePage() {
-  const { state, updateAttendance, loadAttendanceByDate, loadMonthlyAttendance, showToast } = useApp();
+  const { state, updateAttendance, loadAttendanceByDate, loadMonthlyAttendance, saveAttendanceDay, showToast } = useApp();
   const { students, attendance, selectedAttendanceDate, monthlyAttendance, isAdmin } = state;
-  const [activeSelector, setActiveSelector] = useState(null);
   const [monthlyActiveCell, setMonthlyActiveCell] = useState(null);
   const [viewMode, setViewMode] = useState('daily');
   const [monthYear, setMonthYear] = useState({ year: new Date().getFullYear(), month: new Date().getMonth() });
+  // 입력 중인 출석(저장 전). 완료 버튼을 눌러야 db에 반영됨
+  const [draft, setDraft] = useState({});
+  const [selected, setSelected] = useState(() => new Set());
+  const [noteFor, setNoteFor] = useState(null);
+  const [noteText, setNoteText] = useState('');
 
-  const handleDateChange = (e) => loadAttendanceByDate(e.target.value);
+  const baseOf = (id) => attendance[id] || { status: 'present', note: '' };
+  const current = (id) => draft[id] || baseOf(id);
+  const changedIds = students.filter(s => draft[s.id] && !sameAtt(draft[s.id], baseOf(s.id))).map(s => s.id);
+  const dirty = changedIds.length > 0;
+
+  useEffect(() => { setDraft({}); setSelected(new Set()); setNoteFor(null); }, [selectedAttendanceDate]);
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+
+  const handleDateChange = (e) => {
+    if (dirty && !confirm('저장하지 않은 출석 변경이 있어요. 날짜를 바꾸면 사라집니다. 계속할까요?')) return;
+    loadAttendanceByDate(e.target.value);
+  };
   const handleMonthlyStatus = (studentId, date, status) => {
-    if (!isAdmin) { showToast('관리자 모드에서만 수정할 수 있습니다.', 'error'); return; }
-    updateAttendance(studentId, status, '', date);
+    if (!isAdmin) { showToast('선생님 모드에서만 수정할 수 있습니다.', 'error'); return; }
+    updateAttendance(studentId, status, monthlyAttendance[date]?.[studentId]?.note || '', date);
     const s = students.find(st => st.id === studentId);
     showToast(`${s.name} (${date.slice(5).replace('-', '/')}) → ${STATUS_MAP[status].label}`, 'success');
     setMonthlyActiveCell(null);
@@ -1460,98 +1491,160 @@ function AttendancePage() {
 
   useEffect(() => { if (viewMode === 'monthly') loadMonthlyAttendance(monthYear.year, monthYear.month); }, [viewMode, monthYear, loadMonthlyAttendance]);
 
-  const counts = {
-    present: Object.values(attendance).filter(a => a.status === 'present').length,
-    absent: Object.values(attendance).filter(a => a.status === 'absent').length,
-    late: Object.values(attendance).filter(a => a.status === 'late').length,
-    'early-leave': Object.values(attendance).filter(a => a.status === 'early-leave').length,
-  };
+  const counts = Object.fromEntries(STATUS_KEYS.map(k => [k, students.filter(s => current(s.id).status === k).length]));
 
-  const handleStatus = (studentId, status) => {
-    if (!isAdmin) { showToast('관리자 모드에서만 수정할 수 있습니다.', 'error'); return; }
-    updateAttendance(studentId, status, '', selectedAttendanceDate);
-    const s = students.find(st => st.id === studentId);
-    showToast(`${s.name} → ${STATUS_MAP[status].label}`, 'success');
-    setActiveSelector(null);
-  };
+  const toggleSelect = (id) => setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const allSelected = students.length > 0 && selected.size === students.length;
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(students.map(s => s.id)));
 
-  const handleSaveAllToday = () => {
+  const applyStatus = (status) => {
+    if (!selected.size) return;
+    setDraft(prev => {
+      const next = { ...prev };
+      selected.forEach(id => { const cur = next[id] || baseOf(id); next[id] = { status, note: status === 'present' ? '' : cur.note || '' }; });
+      return next;
+    });
+    setSelected(new Set());
+  };
+  const openNote = (id) => { setNoteFor(id); setNoteText(current(id).note || ''); };
+  const saveNote = () => { setDraft(prev => ({ ...prev, [noteFor]: { ...current(noteFor), note: noteText.trim() } })); setNoteFor(null); };
+
+  const discard = () => { setDraft({}); setSelected(new Set()); setNoteFor(null); };
+  const handleSubmit = () => {
     if (!isAdmin) return;
-    students.forEach(s => { const att = attendance[s.id] || { status: 'present', note: '' }; updateAttendance(s.id, att.status, att.note || '', selectedAttendanceDate); });
-    showToast('오늘의 출석 현황이 모두 저장되었습니다.', 'success');
+    const records = {};
+    students.forEach(s => { const a = current(s.id); records[s.id] = { status: a.status, note: a.status === 'present' ? '' : (a.note || ''), id: baseOf(s.id).id }; });
+    saveAttendanceDay(selectedAttendanceDate, records);
+    setDraft({}); setSelected(new Set()); setNoteFor(null);
+    showToast(`${selectedAttendanceDate.slice(5).replace('-', '/')} 출석을 저장했습니다.`, 'success');
   };
 
   const getDaysInMonth = (year, month) => {
     const days = [];
     const lastDay = new Date(year, month + 1, 0).getDate();
     for (let d = 1; d <= lastDay; d++) {
-      const date = new Date(year, month, d);
-      const dow = date.getDay();
+      const dow = new Date(year, month, d).getDay();
       if (dow !== 0 && dow !== 6) days.push(`${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
     }
     return days;
   };
-
   const monthDays = getDaysInMonth(monthYear.year, monthYear.month);
-  const monthLabel = `${monthYear.year}년 ${monthYear.month + 1}월`;
+  const selDate = new Date(selectedAttendanceDate);
+  const isSavedDay = !!monthlyAttendance[selectedAttendanceDate];
+  const noteStudent = students.find(s => s.id === noteFor);
 
   return (
-    <div className="attendance-page">
-      <div className="attendance-view-toggle">
-        <button className={`view-tab ${viewMode === 'daily' ? 'active' : ''}`} onClick={() => setViewMode('daily')}>📋 일별 출석</button>
-        <button className={`view-tab ${viewMode === 'monthly' ? 'active' : ''}`} onClick={() => setViewMode('monthly')}>📊 월별 현황</button>
+    <div className="att">
+      <div className="wk-top">
+        <div className="wk-title">
+          <h1 className="dash-headline">{viewMode === 'daily' ? `${selDate.getMonth() + 1}월 ${selDate.getDate()}일 ${getDayName(selDate)}요일` : `${monthYear.year}년 ${monthYear.month + 1}월`}</h1>
+          {viewMode === 'daily' && <span className={`att-saved ${isSavedDay && !dirty ? 'is-saved' : ''}`}>{dirty ? `저장 안 됨 · ${changedIds.length}명 변경` : isSavedDay ? '저장됨' : '아직 입력 전'}</span>}
+        </div>
+        <div className="mode-switch" role="group" aria-label="보기">
+          <button type="button" aria-pressed={viewMode === 'daily'} onClick={() => setViewMode('daily')}>일별 출석</button>
+          <button type="button" aria-pressed={viewMode === 'monthly'} onClick={() => setViewMode('monthly')}>월별 현황</button>
+        </div>
       </div>
 
       {viewMode === 'daily' ? (
         <>
-          <div className="attendance-controls">
-            <div className="date-display-box"><span className="date-display-icon">📅</span><input type="date" className="attendance-date-input" value={selectedAttendanceDate} onChange={handleDateChange} /></div>
-            {isAdmin && <button className="save-attendance-btn" onClick={handleSaveAllToday}>오늘의 출석 입력 완료</button>}
-            <div className="attendance-summary-bar">{Object.entries(STATUS_MAP).map(([key, val]) => (<div key={key} className={`attendance-count ${val.color}`}><span>{val.icon}</span><span>{val.label}</span><span className="count-num">{counts[key]}</span></div>))}</div>
+          <div className="att-bar">
+            <label className="att-date"><Icon name="calendar" size={18} /><span className="sr-only">날짜</span><input type="date" value={selectedAttendanceDate} onChange={handleDateChange} /></label>
+            <div className="att-counts">
+              {STATUS_KEYS.map(k => <span key={k} className={`att-count is-${k}`}><span className="att-dot" />{STATUS_MAP[k].label}<strong className="num">{counts[k]}</strong></span>)}
+            </div>
           </div>
-          {isAdmin && <p className="attendance-tip">💡 학생 카드를 클릭하면 출석 상태를 변경할 수 있습니다.</p>}
-          <div className="attendance-grid">
-            {students.map(s => {
-              const att = attendance[s.id] || { status: 'present' };
-              const info = STATUS_MAP[att.status];
-              return (
-                <div key={s.id} className={`attendance-cell ${att.status}`} style={{ zIndex: activeSelector === s.id ? 100 : 1 }} onClick={() => { if (isAdmin) setActiveSelector(activeSelector === s.id ? null : s.id); }}>
-                  <div className="student-num">{s.number}번</div><div className="student-name">{s.name}</div><div className="status-icon">{info.icon}</div>
-                  {att.note && <div className="att-note">{att.note}</div>}
-                  {activeSelector === s.id && (
-                    <div className="attendance-status-selector show" onClick={e => e.stopPropagation()}>
-                      {Object.entries(STATUS_MAP).map(([key, val]) => (<button key={key} className={`status-option ${att.status === key ? 'active' : ''}`} onClick={() => handleStatus(s.id, key)}>{val.icon} {val.label}</button>))}
-                    </div>
-                  )}
+
+          {isAdmin && (
+            <div className="att-tools">
+              <button type="button" className={`att-check-all ${allSelected ? 'is-on' : ''}`} aria-pressed={allSelected} onClick={toggleAll} disabled={!students.length}>
+                <span className="att-box" aria-hidden="true" />{allSelected ? '선택 해제' : '모두 선택'}
+              </button>
+              <span className="att-tools-label">{selected.size ? <><strong className="num">{selected.size}</strong>명을</> : '학생을 고른 뒤'}</span>
+              <div className="att-apply">
+                {STATUS_KEYS.map(k => <button key={k} type="button" className={`att-apply-btn is-${k}`} disabled={!selected.size} onClick={() => applyStatus(k)}>{STATUS_MAP[k].label}</button>)}
+              </div>
+            </div>
+          )}
+
+          {students.length === 0 ? <div className="wcard-empty att-empty">학생 관리에서 학생을 등록하면 출석부가 만들어져요.</div> : (
+            <ul className="att-grid">
+              {students.map(s => {
+                const a = current(s.id);
+                const isSel = selected.has(s.id);
+                const changed = changedIds.includes(s.id);
+                const needsNote = a.status !== 'present';
+                return (
+                  <li key={s.id} className={`att-card is-${a.status} ${isSel ? 'is-selected' : ''}`}>
+                    <button type="button" className="att-card-main" aria-pressed={isSel} disabled={!isAdmin} onClick={() => toggleSelect(s.id)}>
+                      {isAdmin && <span className="att-box" aria-hidden="true" />}
+                      <span className="att-no num">{s.number}</span>
+                      <span className="att-name">{s.name}</span>
+                      <span className="att-status">{STATUS_MAP[a.status].label}{changed && <span className="att-changed" aria-label="변경됨" />}</span>
+                    </button>
+                    {needsNote && (
+                      isAdmin
+                        ? <button type="button" className={`att-note-btn ${a.note ? 'has-note' : ''}`} onClick={() => openNote(s.id)}><Icon name="edit" size={14} />{a.note || '사유 쓰기'}</button>
+                        : a.note ? <span className="att-note-btn has-note">{a.note}</span> : null
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          {isAdmin && (
+            <div className={`att-submit ${dirty ? 'is-dirty' : ''}`}>
+              <span className="att-submit-text">{dirty ? <><strong className="num">{changedIds.length}</strong>명의 출석이 바뀌었어요. 완료를 눌러야 저장돼요.</> : isSavedDay ? '이 날의 출석이 저장되어 있어요.' : '출석 상태를 확인하고 완료를 눌러 주세요.'}</span>
+              <div className="att-submit-actions">
+                {dirty && <button type="button" className="btn btn-secondary" onClick={discard}>되돌리기</button>}
+                <button type="button" className="btn btn-primary" onClick={handleSubmit} disabled={!dirty && isSavedDay}>출석 입력 완료</button>
+              </div>
+            </div>
+          )}
+
+          {noteStudent && (
+            <div className="modal-overlay" onClick={() => setNoteFor(null)}>
+              <div className="modal-content att-note-modal" role="dialog" aria-modal="true" aria-labelledby="att-note-title" onClick={e => e.stopPropagation()}>
+                <div className="modal-header"><h3 id="att-note-title">{noteStudent.name} · {STATUS_MAP[current(noteFor).status].label} 사유</h3><button type="button" className="close-btn" aria-label="닫기" onClick={() => setNoteFor(null)}>×</button></div>
+                <div className="modal-body">
+                  <label htmlFor="att-note-text" className="sr-only">사유</label>
+                  <textarea id="att-note-text" className="form-input" rows="3" autoFocus placeholder="예: 감기로 병원 진료" value={noteText} onChange={e => setNoteText(e.target.value)} />
+                  <div className="att-note-presets">{['질병', '병원 진료', '가정 사정', '체험학습', '늦잠'].map(p => <button key={p} type="button" className="chip-btn" onClick={() => setNoteText(p)}>{p}</button>)}</div>
                 </div>
-              );
-            })}
-          </div>
+                <div className="modal-footer att-note-footer"><button type="button" className="btn btn-secondary" onClick={() => setNoteFor(null)}>취소</button><button type="button" className="btn btn-primary" onClick={saveNote}>사유 적기</button></div>
+              </div>
+            </div>
+          )}
         </>
       ) : (
         <div className="monthly-attendance">
-          <div className="monthly-nav">
-            <button className="month-nav-btn" onClick={() => { if (monthYear.month === 0) setMonthYear({ year: monthYear.year - 1, month: 11 }); else setMonthYear({ ...monthYear, month: monthYear.month - 1 }); }}>◀</button>
-            <span className="month-label">{monthLabel}</span>
-            <button className="month-nav-btn" onClick={() => { if (monthYear.month === 11) setMonthYear({ year: monthYear.year + 1, month: 0 }); else setMonthYear({ ...monthYear, month: monthYear.month + 1 }); }}>▶</button>
+          <div className="wk-nav att-month-nav">
+            <button type="button" className="round-btn" aria-label="이전 달" onClick={() => { if (monthYear.month === 0) setMonthYear({ year: monthYear.year - 1, month: 11 }); else setMonthYear({ ...monthYear, month: monthYear.month - 1 }); }}><Icon name="chevron" size={18} /></button>
+            <button type="button" className="round-btn wk-next" aria-label="다음 달" onClick={() => { if (monthYear.month === 11) setMonthYear({ year: monthYear.year + 1, month: 0 }); else setMonthYear({ ...monthYear, month: monthYear.month + 1 }); }}><Icon name="chevron" size={18} /></button>
+            <div className="monthly-legend">
+              {STATUS_KEYS.map(k => <span key={k} className="legend-item"><span className={`legend-icon ${k}`}>{STATUS_MAP[k].mark}</span>{STATUS_MAP[k].label}</span>)}
+              <span className="legend-item"><span className="legend-icon no-data">-</span>기록 없음</span>
+            </div>
           </div>
           <div className="monthly-table-wrapper">
             <table className="monthly-table">
               <thead><tr><th className="sticky-col">번호</th><th className="sticky-col-name">이름</th>
-                {monthDays.map(d => { const date = new Date(d); const dayNames = ['일', '월', '화', '수', '목', '금', '토']; return (<th key={d} className="date-col"><div className="date-header"><span>{date.getDate()}</span><span className="date-dow">{dayNames[date.getDay()]}</span></div></th>); })}
+                {monthDays.map(d => { const date = new Date(d); return (<th key={d} className="date-col"><div className="date-header"><span className="num">{date.getDate()}</span><span className="date-dow">{getDayName(date)}</span></div></th>); })}
               </tr></thead>
               <tbody>
                 {students.map(s => (
                   <tr key={s.id}>
-                    <td className="sticky-col">{s.number}</td><td className="sticky-col-name">{s.name}</td>
+                    <td className="sticky-col num">{s.number}</td><td className="sticky-col-name">{s.name}</td>
                     {monthDays.map(d => {
                       const record = monthlyAttendance[d]?.[s.id];
                       const status = record?.status || null;
                       const isCellActive = monthlyActiveCell?.studentId === s.id && monthlyActiveCell?.date === d;
                       return (
                         <td key={d} className={`monthly-cell ${status || 'no-data'} ${isCellActive ? 'active' : ''}`} title={record?.note || ''} onClick={() => { if (isAdmin) setMonthlyActiveCell(isCellActive ? null : { studentId: s.id, date: d }); }} style={{ position: 'relative', cursor: isAdmin ? 'pointer' : 'default' }}>
-                          {status ? (<span className={`monthly-status ${status}`}>{status === 'present' ? '○' : status === 'absent' ? '✕' : status === 'late' ? '△' : '▽'}</span>) : (<span className="monthly-status no-data">-</span>)}
-                          {isAdmin && isCellActive && (<div className="attendance-status-selector show monthly-selector" onClick={e => e.stopPropagation()}>{Object.entries(STATUS_MAP).map(([key, val]) => (<button key={key} className={`status-option ${status === key ? 'active' : ''}`} onClick={() => handleMonthlyStatus(s.id, d, key)}>{val.icon} {val.label}</button>))}</div>)}
+                          <span className={`monthly-status ${status || 'no-data'}`}>{status ? STATUS_MAP[status].mark : '-'}</span>
+                          {record?.note && <span className="monthly-note-dot" aria-label={`사유: ${record.note}`} />}
+                          {isAdmin && isCellActive && (<div className="attendance-status-selector show monthly-selector" onClick={e => e.stopPropagation()}>{STATUS_KEYS.map(k => (<button key={k} type="button" className={`status-option ${status === k ? 'active' : ''}`} onClick={() => handleMonthlyStatus(s.id, d, k)}>{STATUS_MAP[k].label}</button>))}</div>)}
                         </td>
                       );
                     })}
@@ -1559,13 +1652,6 @@ function AttendancePage() {
                 ))}
               </tbody>
             </table>
-          </div>
-          <div className="monthly-legend">
-            <span className="legend-item"><span className="legend-icon present">○</span> 출석</span>
-            <span className="legend-item"><span className="legend-icon absent">✕</span> 결석</span>
-            <span className="legend-item"><span className="legend-icon late">△</span> 지각</span>
-            <span className="legend-item"><span className="legend-icon early-leave">▽</span> 조퇴</span>
-            <span className="legend-item"><span className="legend-icon no-data">-</span> 기록 없음</span>
           </div>
         </div>
       )}
@@ -1903,51 +1989,73 @@ function WeeklyPlanPage() {
   const handleEdit = (day, period, subject, content) => { if (!isAdmin) return; setEditing({ day, period }); setEditSubject(subject || ''); setEditContent(content || ''); };
   const handleSave = useCallback(() => { saveWeeklyPlan(weekKey, editing.day, editing.period, editSubject, editContent); setEditing(null); showToast('주간 일정이 저장되었습니다.', 'success'); }, [saveWeeklyPlan, weekKey, editing, editSubject, editContent, showToast]);
 
+  const sameMonth = weekStart.getMonth() === weekEndDate.getMonth();
+  const rangeLabel = `${weekStart.getMonth() + 1}월 ${weekStart.getDate()}일 – ${sameMonth ? '' : `${weekEndDate.getMonth() + 1}월 `}${weekEndDate.getDate()}일`;
+
+  const renderRow = (p) => (
+    <tr key={p}>
+      <th scope="row" className="wk-period"><span className="wk-period-no">{p}교시</span><span className="wk-period-time num">{minToClock(PERIOD_SLOTS[p][0])}</span></th>
+      {dayDates.map(dd => {
+        const plan = currentWeekPlans[dd.day]?.[p] || {};
+        const isEditing = editing?.day === dd.day && editing?.period === p;
+        const isToday = dd.isoDate === todayStr;
+        const isEmpty = !plan.subject && !plan.content;
+        return (
+          <td key={dd.day} className={`wk-cell ${isToday ? 'is-today' : ''} ${isEditing ? 'is-editing' : ''}`}>
+            {isEditing ? (
+              <div className="wk-form">
+                <input className="form-input" aria-label={`${dd.day}요일 ${p}교시 과목`} placeholder="과목 (예: 국어)" value={editSubject} onChange={e => setEditSubject(e.target.value)} autoFocus />
+                <input className="form-input" aria-label={`${dd.day}요일 ${p}교시 학습 내용`} placeholder="학습 내용" value={editContent} onChange={e => setEditContent(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSave()} />
+                <div className="wk-form-actions"><button type="button" className="btn btn-sm btn-secondary" onClick={() => setEditing(null)}>취소</button><button type="button" className="btn btn-sm btn-primary" onClick={handleSave}>저장</button></div>
+              </div>
+            ) : isAdmin ? (
+              <button type="button" className={`wk-plan ${isEmpty ? 'is-empty' : ''}`} aria-label={`${dd.day}요일 ${p}교시 ${isEmpty ? '입력' : '수정'}`} onClick={() => handleEdit(dd.day, p, plan.subject, plan.content)}>
+                {isEmpty ? <span className="wk-add"><Icon name="plus" size={14} />입력</span> : <><span className="wk-subject">{plan.subject}</span>{plan.content && <span className="wk-content">{plan.content}</span>}</>}
+              </button>
+            ) : (
+              <div className={`wk-plan ${isEmpty ? 'is-empty' : ''}`}>{plan.subject && <span className="wk-subject">{plan.subject}</span>}{plan.content && <span className="wk-content">{plan.content}</span>}</div>
+            )}
+          </td>
+        );
+      })}
+    </tr>
+  );
+
   return (
-    <div className="weekly-page">
-      <div className="weekly-header">
-        <h2 className="section-title">📅 주간 교육일정</h2>
-        <div className="weekly-nav">
-          <button className="week-nav-btn" onClick={goToPrevWeek}>◀ 이전 주</button>
-          {!isCurrentWeek && <button className="week-nav-btn today-btn" onClick={goToToday}>오늘</button>}
-          <span className="weekly-date">{weekStart.getMonth() + 1}/{weekStart.getDate()} ~ {weekEndDate.getMonth() + 1}/{weekEndDate.getDate()}</span>
-          <button className="week-nav-btn" onClick={goToNextWeek}>다음 주 ▶</button>
+    <div className="wk">
+      <div className="wk-top">
+        <div className="wk-title">
+          <h1 className="dash-headline">{rangeLabel}</h1>
+          {isCurrentWeek && <span className="wk-chip">이번 주</span>}
+        </div>
+        <div className="wk-nav">
+          <button type="button" className="round-btn" aria-label="이전 주" onClick={goToPrevWeek}><Icon name="chevron" size={18} /></button>
+          <button type="button" className="btn btn-sm btn-secondary" onClick={goToToday} disabled={isCurrentWeek}>오늘</button>
+          <button type="button" className="round-btn wk-next" aria-label="다음 주" onClick={goToNextWeek}><Icon name="chevron" size={18} /></button>
         </div>
       </div>
-      {isAdmin && <p className="weekly-tip">💡 빈 칸을 클릭하면 내용을 수정할 수 있습니다.</p>}
-      <div className="weekly-table-wrapper card">
-        <table className="weekly-table">
-          <thead><tr><th className="period-col">교시</th>{dayDates.map(dd => (<th key={dd.day} className={dd.isoDate === todayStr ? 'today-col' : ''}><div className="day-header"><span className="day-name">{dd.day}요일</span><span className="day-date">{dd.dateStr}</span></div></th>))}</tr></thead>
+      {isAdmin && <p className="dash-edit-hint">칸을 눌러 과목과 학습 내용을 적고, Enter로 저장하세요.</p>}
+      <div className="wk-card">
+        <table className="wk-table">
+          <thead>
+            <tr>
+              <th scope="col" className="wk-corner">교시</th>
+              {dayDates.map(dd => (
+                <th scope="col" key={dd.day} className={dd.isoDate === todayStr ? 'is-today' : ''}>
+                  <span className="wk-day">{dd.day}</span><span className="wk-date num">{dd.dateStr}</span>
+                </th>
+              ))}
+            </tr>
+          </thead>
           <tbody>
-            {WEEK_PERIODS.map(p => (
-              <tr key={p}>
-                <td className="period-cell">{p}</td>
-                {dayDates.map(dd => {
-                  const plan = currentWeekPlans[dd.day]?.[p] || {};
-                  const isEditing = editing?.day === dd.day && editing?.period === p;
-                  const isToday = dd.isoDate === todayStr;
-                  return (
-                    <td key={dd.day} className={`plan-cell ${isAdmin ? 'editable' : ''} ${isEditing ? 'is-editing' : ''} ${isToday ? 'today-cell' : ''}`} onClick={() => !isEditing && handleEdit(dd.day, p, plan.subject, plan.content)}>
-                      {isEditing ? (
-                        <div className="plan-edit-form" onClick={e => e.stopPropagation()}>
-                          <input className="form-input plan-subject-input" placeholder="과목 (예: 국어)" value={editSubject} onChange={e => setEditSubject(e.target.value)} autoFocus />
-                          <input className="form-input plan-content-input" placeholder="학습 내용 입력..." value={editContent} onChange={e => setEditContent(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSave()} />
-                          <div className="plan-edit-actions"><button className="btn btn-sm btn-primary" onClick={handleSave}>저장</button><button className="btn btn-sm btn-secondary" onClick={() => setEditing(null)}>취소</button></div>
-                        </div>
-                      ) : (
-                        <div className="plan-display">{plan.subject && <div className="plan-subject">{plan.subject}</div>}{plan.content && <div className="plan-content">{plan.content}</div>}{!plan.subject && !plan.content && <div className="plan-empty">-</div>}</div>
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
+            {WEEK_PERIODS.map(renderRow)}
           </tbody>
         </table>
       </div>
     </div>
   );
 }
+
 
 /* ===================================================================
    LinksPage

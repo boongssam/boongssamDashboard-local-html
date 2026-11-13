@@ -106,6 +106,27 @@ function reducer(state, action) {
           monthlyAttendance: newMonthly
         };
       }
+    case 'SAVE_ATTENDANCE_DAY':
+      {
+        const {
+          date,
+          records
+        } = action.payload;
+        return {
+          ...state,
+          monthlyAttendance: {
+            ...state.monthlyAttendance,
+            [date]: {
+              ...(state.monthlyAttendance[date] || {}),
+              ...records
+            }
+          },
+          attendance: date === state.selectedAttendanceDate ? {
+            ...state.attendance,
+            ...records
+          } : state.attendance
+        };
+      }
     case 'UPDATE_MONTHLY_ATTENDANCE':
       {
         const {
@@ -639,6 +660,13 @@ function AppProvider({
     });
   }, [state.students, state.monthlyAttendance]);
   const loadMonthlyAttendanceFunc = useCallback(() => {}, []);
+  const saveAttendanceDayFunc = (date, records) => dispatch({
+    type: 'SAVE_ATTENDANCE_DAY',
+    payload: {
+      date,
+      records
+    }
+  });
   const addStudentRecordFunc = (studentId, type, content, category = '') => {
     const date = toISODate(new Date());
     dispatch({
@@ -787,6 +815,7 @@ function AppProvider({
     updateAttendance: updateAttendanceFunc,
     loadAttendanceByDate: loadAttendanceByDateFunc,
     loadMonthlyAttendance: loadMonthlyAttendanceFunc,
+    saveAttendanceDay: saveAttendanceDayFunc,
     updateStudent: updateStudentFunc,
     bulkUpdateStudents: bulkUpdateStudentsFunc,
     addStudentRecord: addStudentRecordFunc,
@@ -1701,8 +1730,8 @@ function DashboardGrid({
 const PERIOD_SLOTS = {
   1: [540, 580],
   2: [590, 630],
-  3: [640, 680],
-  4: [690, 730],
+  3: [650, 690],
+  4: [750, 790],
   5: [790, 830],
   6: [840, 880]
 };
@@ -3415,31 +3444,30 @@ function StudentsPage() {
 const STATUS_MAP = {
   present: {
     label: '출석',
-    icon: '✅',
-    color: 'present'
+    mark: '○'
   },
   absent: {
     label: '결석',
-    icon: '❌',
-    color: 'absent'
+    mark: '✕'
   },
   late: {
     label: '지각',
-    icon: '⏰',
-    color: 'late'
+    mark: '△'
   },
   'early-leave': {
     label: '조퇴',
-    icon: '🏃',
-    color: 'early-leave'
+    mark: '▽'
   }
 };
+const STATUS_KEYS = Object.keys(STATUS_MAP);
+const sameAtt = (a, b) => (a?.status || 'present') === (b?.status || 'present') && (a?.note || '') === (b?.note || '');
 function AttendancePage() {
   const {
     state,
     updateAttendance,
     loadAttendanceByDate,
     loadMonthlyAttendance,
+    saveAttendanceDay,
     showToast
   } = useApp();
   const {
@@ -3449,20 +3477,48 @@ function AttendancePage() {
     monthlyAttendance,
     isAdmin
   } = state;
-  const [activeSelector, setActiveSelector] = useState(null);
   const [monthlyActiveCell, setMonthlyActiveCell] = useState(null);
   const [viewMode, setViewMode] = useState('daily');
   const [monthYear, setMonthYear] = useState({
     year: new Date().getFullYear(),
     month: new Date().getMonth()
   });
-  const handleDateChange = e => loadAttendanceByDate(e.target.value);
+  // 입력 중인 출석(저장 전). 완료 버튼을 눌러야 db에 반영됨
+  const [draft, setDraft] = useState({});
+  const [selected, setSelected] = useState(() => new Set());
+  const [noteFor, setNoteFor] = useState(null);
+  const [noteText, setNoteText] = useState('');
+  const baseOf = id => attendance[id] || {
+    status: 'present',
+    note: ''
+  };
+  const current = id => draft[id] || baseOf(id);
+  const changedIds = students.filter(s => draft[s.id] && !sameAtt(draft[s.id], baseOf(s.id))).map(s => s.id);
+  const dirty = changedIds.length > 0;
+  useEffect(() => {
+    setDraft({});
+    setSelected(new Set());
+    setNoteFor(null);
+  }, [selectedAttendanceDate]);
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = e => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+  const handleDateChange = e => {
+    if (dirty && !confirm('저장하지 않은 출석 변경이 있어요. 날짜를 바꾸면 사라집니다. 계속할까요?')) return;
+    loadAttendanceByDate(e.target.value);
+  };
   const handleMonthlyStatus = (studentId, date, status) => {
     if (!isAdmin) {
-      showToast('관리자 모드에서만 수정할 수 있습니다.', 'error');
+      showToast('선생님 모드에서만 수정할 수 있습니다.', 'error');
       return;
     }
-    updateAttendance(studentId, status, '', date);
+    updateAttendance(studentId, status, monthlyAttendance[date]?.[studentId]?.note || '', date);
     const s = students.find(st => st.id === studentId);
     showToast(`${s.name} (${date.slice(5).replace('-', '/')}) → ${STATUS_MAP[status].label}`, 'success');
     setMonthlyActiveCell(null);
@@ -3470,116 +3526,260 @@ function AttendancePage() {
   useEffect(() => {
     if (viewMode === 'monthly') loadMonthlyAttendance(monthYear.year, monthYear.month);
   }, [viewMode, monthYear, loadMonthlyAttendance]);
-  const counts = {
-    present: Object.values(attendance).filter(a => a.status === 'present').length,
-    absent: Object.values(attendance).filter(a => a.status === 'absent').length,
-    late: Object.values(attendance).filter(a => a.status === 'late').length,
-    'early-leave': Object.values(attendance).filter(a => a.status === 'early-leave').length
-  };
-  const handleStatus = (studentId, status) => {
-    if (!isAdmin) {
-      showToast('관리자 모드에서만 수정할 수 있습니다.', 'error');
-      return;
-    }
-    updateAttendance(studentId, status, '', selectedAttendanceDate);
-    const s = students.find(st => st.id === studentId);
-    showToast(`${s.name} → ${STATUS_MAP[status].label}`, 'success');
-    setActiveSelector(null);
-  };
-  const handleSaveAllToday = () => {
-    if (!isAdmin) return;
-    students.forEach(s => {
-      const att = attendance[s.id] || {
-        status: 'present',
-        note: ''
+  const counts = Object.fromEntries(STATUS_KEYS.map(k => [k, students.filter(s => current(s.id).status === k).length]));
+  const toggleSelect = id => setSelected(prev => {
+    const n = new Set(prev);
+    n.has(id) ? n.delete(id) : n.add(id);
+    return n;
+  });
+  const allSelected = students.length > 0 && selected.size === students.length;
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(students.map(s => s.id)));
+  const applyStatus = status => {
+    if (!selected.size) return;
+    setDraft(prev => {
+      const next = {
+        ...prev
       };
-      updateAttendance(s.id, att.status, att.note || '', selectedAttendanceDate);
+      selected.forEach(id => {
+        const cur = next[id] || baseOf(id);
+        next[id] = {
+          status,
+          note: status === 'present' ? '' : cur.note || ''
+        };
+      });
+      return next;
     });
-    showToast('오늘의 출석 현황이 모두 저장되었습니다.', 'success');
+    setSelected(new Set());
+  };
+  const openNote = id => {
+    setNoteFor(id);
+    setNoteText(current(id).note || '');
+  };
+  const saveNote = () => {
+    setDraft(prev => ({
+      ...prev,
+      [noteFor]: {
+        ...current(noteFor),
+        note: noteText.trim()
+      }
+    }));
+    setNoteFor(null);
+  };
+  const discard = () => {
+    setDraft({});
+    setSelected(new Set());
+    setNoteFor(null);
+  };
+  const handleSubmit = () => {
+    if (!isAdmin) return;
+    const records = {};
+    students.forEach(s => {
+      const a = current(s.id);
+      records[s.id] = {
+        status: a.status,
+        note: a.status === 'present' ? '' : a.note || '',
+        id: baseOf(s.id).id
+      };
+    });
+    saveAttendanceDay(selectedAttendanceDate, records);
+    setDraft({});
+    setSelected(new Set());
+    setNoteFor(null);
+    showToast(`${selectedAttendanceDate.slice(5).replace('-', '/')} 출석을 저장했습니다.`, 'success');
   };
   const getDaysInMonth = (year, month) => {
     const days = [];
     const lastDay = new Date(year, month + 1, 0).getDate();
     for (let d = 1; d <= lastDay; d++) {
-      const date = new Date(year, month, d);
-      const dow = date.getDay();
+      const dow = new Date(year, month, d).getDay();
       if (dow !== 0 && dow !== 6) days.push(`${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
     }
     return days;
   };
   const monthDays = getDaysInMonth(monthYear.year, monthYear.month);
-  const monthLabel = `${monthYear.year}년 ${monthYear.month + 1}월`;
+  const selDate = new Date(selectedAttendanceDate);
+  const isSavedDay = !!monthlyAttendance[selectedAttendanceDate];
+  const noteStudent = students.find(s => s.id === noteFor);
   return /*#__PURE__*/React.createElement("div", {
-    className: "attendance-page"
+    className: "att"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "attendance-view-toggle"
+    className: "wk-top"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wk-title"
+  }, /*#__PURE__*/React.createElement("h1", {
+    className: "dash-headline"
+  }, viewMode === 'daily' ? `${selDate.getMonth() + 1}월 ${selDate.getDate()}일 ${getDayName(selDate)}요일` : `${monthYear.year}년 ${monthYear.month + 1}월`), viewMode === 'daily' && /*#__PURE__*/React.createElement("span", {
+    className: `att-saved ${isSavedDay && !dirty ? 'is-saved' : ''}`
+  }, dirty ? `저장 안 됨 · ${changedIds.length}명 변경` : isSavedDay ? '저장됨' : '아직 입력 전')), /*#__PURE__*/React.createElement("div", {
+    className: "mode-switch",
+    role: "group",
+    "aria-label": "\uBCF4\uAE30"
   }, /*#__PURE__*/React.createElement("button", {
-    className: `view-tab ${viewMode === 'daily' ? 'active' : ''}`,
+    type: "button",
+    "aria-pressed": viewMode === 'daily',
     onClick: () => setViewMode('daily')
-  }, "\uD83D\uDCCB \uC77C\uBCC4 \uCD9C\uC11D"), /*#__PURE__*/React.createElement("button", {
-    className: `view-tab ${viewMode === 'monthly' ? 'active' : ''}`,
+  }, "\uC77C\uBCC4 \uCD9C\uC11D"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    "aria-pressed": viewMode === 'monthly',
     onClick: () => setViewMode('monthly')
-  }, "\uD83D\uDCCA \uC6D4\uBCC4 \uD604\uD669")), viewMode === 'daily' ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "attendance-controls"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "date-display-box"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "date-display-icon"
-  }, "\uD83D\uDCC5"), /*#__PURE__*/React.createElement("input", {
+  }, "\uC6D4\uBCC4 \uD604\uD669"))), viewMode === 'daily' ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "att-bar"
+  }, /*#__PURE__*/React.createElement("label", {
+    className: "att-date"
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "calendar",
+    size: 18
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "sr-only"
+  }, "\uB0A0\uC9DC"), /*#__PURE__*/React.createElement("input", {
     type: "date",
-    className: "attendance-date-input",
     value: selectedAttendanceDate,
     onChange: handleDateChange
-  })), isAdmin && /*#__PURE__*/React.createElement("button", {
-    className: "save-attendance-btn",
-    onClick: handleSaveAllToday
-  }, "\uC624\uB298\uC758 \uCD9C\uC11D \uC785\uB825 \uC644\uB8CC"), /*#__PURE__*/React.createElement("div", {
-    className: "attendance-summary-bar"
-  }, Object.entries(STATUS_MAP).map(([key, val]) => /*#__PURE__*/React.createElement("div", {
-    key: key,
-    className: `attendance-count ${val.color}`
-  }, /*#__PURE__*/React.createElement("span", null, val.icon), /*#__PURE__*/React.createElement("span", null, val.label), /*#__PURE__*/React.createElement("span", {
-    className: "count-num"
-  }, counts[key]))))), isAdmin && /*#__PURE__*/React.createElement("p", {
-    className: "attendance-tip"
-  }, "\uD83D\uDCA1 \uD559\uC0DD \uCE74\uB4DC\uB97C \uD074\uB9AD\uD558\uBA74 \uCD9C\uC11D \uC0C1\uD0DC\uB97C \uBCC0\uACBD\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4."), /*#__PURE__*/React.createElement("div", {
-    className: "attendance-grid"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "att-counts"
+  }, STATUS_KEYS.map(k => /*#__PURE__*/React.createElement("span", {
+    key: k,
+    className: `att-count is-${k}`
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "att-dot"
+  }), STATUS_MAP[k].label, /*#__PURE__*/React.createElement("strong", {
+    className: "num"
+  }, counts[k]))))), isAdmin && /*#__PURE__*/React.createElement("div", {
+    className: "att-tools"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: `att-check-all ${allSelected ? 'is-on' : ''}`,
+    "aria-pressed": allSelected,
+    onClick: toggleAll,
+    disabled: !students.length
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "att-box",
+    "aria-hidden": "true"
+  }), allSelected ? '선택 해제' : '모두 선택'), /*#__PURE__*/React.createElement("span", {
+    className: "att-tools-label"
+  }, selected.size ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("strong", {
+    className: "num"
+  }, selected.size), "\uBA85\uC744") : '학생을 고른 뒤'), /*#__PURE__*/React.createElement("div", {
+    className: "att-apply"
+  }, STATUS_KEYS.map(k => /*#__PURE__*/React.createElement("button", {
+    key: k,
+    type: "button",
+    className: `att-apply-btn is-${k}`,
+    disabled: !selected.size,
+    onClick: () => applyStatus(k)
+  }, STATUS_MAP[k].label)))), students.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "wcard-empty att-empty"
+  }, "\uD559\uC0DD \uAD00\uB9AC\uC5D0\uC11C \uD559\uC0DD\uC744 \uB4F1\uB85D\uD558\uBA74 \uCD9C\uC11D\uBD80\uAC00 \uB9CC\uB4E4\uC5B4\uC838\uC694.") : /*#__PURE__*/React.createElement("ul", {
+    className: "att-grid"
   }, students.map(s => {
-    const att = attendance[s.id] || {
-      status: 'present'
-    };
-    const info = STATUS_MAP[att.status];
-    return /*#__PURE__*/React.createElement("div", {
+    const a = current(s.id);
+    const isSel = selected.has(s.id);
+    const changed = changedIds.includes(s.id);
+    const needsNote = a.status !== 'present';
+    return /*#__PURE__*/React.createElement("li", {
       key: s.id,
-      className: `attendance-cell ${att.status}`,
-      style: {
-        zIndex: activeSelector === s.id ? 100 : 1
-      },
-      onClick: () => {
-        if (isAdmin) setActiveSelector(activeSelector === s.id ? null : s.id);
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "student-num"
-    }, s.number, "\uBC88"), /*#__PURE__*/React.createElement("div", {
-      className: "student-name"
-    }, s.name), /*#__PURE__*/React.createElement("div", {
-      className: "status-icon"
-    }, info.icon), att.note && /*#__PURE__*/React.createElement("div", {
-      className: "att-note"
-    }, att.note), activeSelector === s.id && /*#__PURE__*/React.createElement("div", {
-      className: "attendance-status-selector show",
-      onClick: e => e.stopPropagation()
-    }, Object.entries(STATUS_MAP).map(([key, val]) => /*#__PURE__*/React.createElement("button", {
-      key: key,
-      className: `status-option ${att.status === key ? 'active' : ''}`,
-      onClick: () => handleStatus(s.id, key)
-    }, val.icon, " ", val.label))));
-  }))) : /*#__PURE__*/React.createElement("div", {
+      className: `att-card is-${a.status} ${isSel ? 'is-selected' : ''}`
+    }, /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "att-card-main",
+      "aria-pressed": isSel,
+      disabled: !isAdmin,
+      onClick: () => toggleSelect(s.id)
+    }, isAdmin && /*#__PURE__*/React.createElement("span", {
+      className: "att-box",
+      "aria-hidden": "true"
+    }), /*#__PURE__*/React.createElement("span", {
+      className: "att-no num"
+    }, s.number), /*#__PURE__*/React.createElement("span", {
+      className: "att-name"
+    }, s.name), /*#__PURE__*/React.createElement("span", {
+      className: "att-status"
+    }, STATUS_MAP[a.status].label, changed && /*#__PURE__*/React.createElement("span", {
+      className: "att-changed",
+      "aria-label": "\uBCC0\uACBD\uB428"
+    }))), needsNote && (isAdmin ? /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: `att-note-btn ${a.note ? 'has-note' : ''}`,
+      onClick: () => openNote(s.id)
+    }, /*#__PURE__*/React.createElement(Icon, {
+      name: "edit",
+      size: 14
+    }), a.note || '사유 쓰기') : a.note ? /*#__PURE__*/React.createElement("span", {
+      className: "att-note-btn has-note"
+    }, a.note) : null));
+  })), isAdmin && /*#__PURE__*/React.createElement("div", {
+    className: `att-submit ${dirty ? 'is-dirty' : ''}`
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "att-submit-text"
+  }, dirty ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("strong", {
+    className: "num"
+  }, changedIds.length), "\uBA85\uC758 \uCD9C\uC11D\uC774 \uBC14\uB00C\uC5C8\uC5B4\uC694. \uC644\uB8CC\uB97C \uB20C\uB7EC\uC57C \uC800\uC7A5\uB3FC\uC694.") : isSavedDay ? '이 날의 출석이 저장되어 있어요.' : '출석 상태를 확인하고 완료를 눌러 주세요.'), /*#__PURE__*/React.createElement("div", {
+    className: "att-submit-actions"
+  }, dirty && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-secondary",
+    onClick: discard
+  }, "\uB418\uB3CC\uB9AC\uAE30"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-primary",
+    onClick: handleSubmit,
+    disabled: !dirty && isSavedDay
+  }, "\uCD9C\uC11D \uC785\uB825 \uC644\uB8CC"))), noteStudent && /*#__PURE__*/React.createElement("div", {
+    className: "modal-overlay",
+    onClick: () => setNoteFor(null)
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "modal-content att-note-modal",
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-labelledby": "att-note-title",
+    onClick: e => e.stopPropagation()
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "modal-header"
+  }, /*#__PURE__*/React.createElement("h3", {
+    id: "att-note-title"
+  }, noteStudent.name, " \xB7 ", STATUS_MAP[current(noteFor).status].label, " \uC0AC\uC720"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "close-btn",
+    "aria-label": "\uB2EB\uAE30",
+    onClick: () => setNoteFor(null)
+  }, "\xD7")), /*#__PURE__*/React.createElement("div", {
+    className: "modal-body"
+  }, /*#__PURE__*/React.createElement("label", {
+    htmlFor: "att-note-text",
+    className: "sr-only"
+  }, "\uC0AC\uC720"), /*#__PURE__*/React.createElement("textarea", {
+    id: "att-note-text",
+    className: "form-input",
+    rows: "3",
+    autoFocus: true,
+    placeholder: "\uC608: \uAC10\uAE30\uB85C \uBCD1\uC6D0 \uC9C4\uB8CC",
+    value: noteText,
+    onChange: e => setNoteText(e.target.value)
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "att-note-presets"
+  }, ['질병', '병원 진료', '가정 사정', '체험학습', '늦잠'].map(p => /*#__PURE__*/React.createElement("button", {
+    key: p,
+    type: "button",
+    className: "chip-btn",
+    onClick: () => setNoteText(p)
+  }, p)))), /*#__PURE__*/React.createElement("div", {
+    className: "modal-footer att-note-footer"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-secondary",
+    onClick: () => setNoteFor(null)
+  }, "\uCDE8\uC18C"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-primary",
+    onClick: saveNote
+  }, "\uC0AC\uC720 \uC801\uAE30"))))) : /*#__PURE__*/React.createElement("div", {
     className: "monthly-attendance"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "monthly-nav"
+    className: "wk-nav att-month-nav"
   }, /*#__PURE__*/React.createElement("button", {
-    className: "month-nav-btn",
+    type: "button",
+    className: "round-btn",
+    "aria-label": "\uC774\uC804 \uB2EC",
     onClick: () => {
       if (monthYear.month === 0) setMonthYear({
         year: monthYear.year - 1,
@@ -3589,10 +3789,13 @@ function AttendancePage() {
         month: monthYear.month - 1
       });
     }
-  }, "\u25C0"), /*#__PURE__*/React.createElement("span", {
-    className: "month-label"
-  }, monthLabel), /*#__PURE__*/React.createElement("button", {
-    className: "month-nav-btn",
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "chevron",
+    size: 18
+  })), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "round-btn wk-next",
+    "aria-label": "\uB2E4\uC74C \uB2EC",
     onClick: () => {
       if (monthYear.month === 11) setMonthYear({
         year: monthYear.year + 1,
@@ -3602,7 +3805,21 @@ function AttendancePage() {
         month: monthYear.month + 1
       });
     }
-  }, "\u25B6")), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "chevron",
+    size: 18
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "monthly-legend"
+  }, STATUS_KEYS.map(k => /*#__PURE__*/React.createElement("span", {
+    key: k,
+    className: "legend-item"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: `legend-icon ${k}`
+  }, STATUS_MAP[k].mark), STATUS_MAP[k].label)), /*#__PURE__*/React.createElement("span", {
+    className: "legend-item"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "legend-icon no-data"
+  }, "-"), "\uAE30\uB85D \uC5C6\uC74C"))), /*#__PURE__*/React.createElement("div", {
     className: "monthly-table-wrapper"
   }, /*#__PURE__*/React.createElement("table", {
     className: "monthly-table"
@@ -3612,19 +3829,20 @@ function AttendancePage() {
     className: "sticky-col-name"
   }, "\uC774\uB984"), monthDays.map(d => {
     const date = new Date(d);
-    const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
     return /*#__PURE__*/React.createElement("th", {
       key: d,
       className: "date-col"
     }, /*#__PURE__*/React.createElement("div", {
       className: "date-header"
-    }, /*#__PURE__*/React.createElement("span", null, date.getDate()), /*#__PURE__*/React.createElement("span", {
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "num"
+    }, date.getDate()), /*#__PURE__*/React.createElement("span", {
       className: "date-dow"
-    }, dayNames[date.getDay()])));
+    }, getDayName(date))));
   }))), /*#__PURE__*/React.createElement("tbody", null, students.map(s => /*#__PURE__*/React.createElement("tr", {
     key: s.id
   }, /*#__PURE__*/React.createElement("td", {
-    className: "sticky-col"
+    className: "sticky-col num"
   }, s.number), /*#__PURE__*/React.createElement("td", {
     className: "sticky-col-name"
   }, s.name), monthDays.map(d => {
@@ -3645,41 +3863,21 @@ function AttendancePage() {
         position: 'relative',
         cursor: isAdmin ? 'pointer' : 'default'
       }
-    }, status ? /*#__PURE__*/React.createElement("span", {
-      className: `monthly-status ${status}`
-    }, status === 'present' ? '○' : status === 'absent' ? '✕' : status === 'late' ? '△' : '▽') : /*#__PURE__*/React.createElement("span", {
-      className: "monthly-status no-data"
-    }, "-"), isAdmin && isCellActive && /*#__PURE__*/React.createElement("div", {
+    }, /*#__PURE__*/React.createElement("span", {
+      className: `monthly-status ${status || 'no-data'}`
+    }, status ? STATUS_MAP[status].mark : '-'), record?.note && /*#__PURE__*/React.createElement("span", {
+      className: "monthly-note-dot",
+      "aria-label": `사유: ${record.note}`
+    }), isAdmin && isCellActive && /*#__PURE__*/React.createElement("div", {
       className: "attendance-status-selector show monthly-selector",
       onClick: e => e.stopPropagation()
-    }, Object.entries(STATUS_MAP).map(([key, val]) => /*#__PURE__*/React.createElement("button", {
-      key: key,
-      className: `status-option ${status === key ? 'active' : ''}`,
-      onClick: () => handleMonthlyStatus(s.id, d, key)
-    }, val.icon, " ", val.label))));
-  })))))), /*#__PURE__*/React.createElement("div", {
-    className: "monthly-legend"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "legend-item"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "legend-icon present"
-  }, "\u25CB"), " \uCD9C\uC11D"), /*#__PURE__*/React.createElement("span", {
-    className: "legend-item"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "legend-icon absent"
-  }, "\u2715"), " \uACB0\uC11D"), /*#__PURE__*/React.createElement("span", {
-    className: "legend-item"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "legend-icon late"
-  }, "\u25B3"), " \uC9C0\uAC01"), /*#__PURE__*/React.createElement("span", {
-    className: "legend-item"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "legend-icon early-leave"
-  }, "\u25BD"), " \uC870\uD1F4"), /*#__PURE__*/React.createElement("span", {
-    className: "legend-item"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "legend-icon no-data"
-  }, "-"), " \uAE30\uB85D \uC5C6\uC74C"))));
+    }, STATUS_KEYS.map(k => /*#__PURE__*/React.createElement("button", {
+      key: k,
+      type: "button",
+      className: `status-option ${status === k ? 'active' : ''}`,
+      onClick: () => handleMonthlyStatus(s.id, d, k)
+    }, STATUS_MAP[k].label))));
+  }))))))));
 }
 
 /* ===================================================================
@@ -4595,87 +4793,124 @@ function WeeklyPlanPage() {
     setEditing(null);
     showToast('주간 일정이 저장되었습니다.', 'success');
   }, [saveWeeklyPlan, weekKey, editing, editSubject, editContent, showToast]);
-  return /*#__PURE__*/React.createElement("div", {
-    className: "weekly-page"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "weekly-header"
-  }, /*#__PURE__*/React.createElement("h2", {
-    className: "section-title"
-  }, "\uD83D\uDCC5 \uC8FC\uAC04 \uAD50\uC721\uC77C\uC815"), /*#__PURE__*/React.createElement("div", {
-    className: "weekly-nav"
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "week-nav-btn",
-    onClick: goToPrevWeek
-  }, "\u25C0 \uC774\uC804 \uC8FC"), !isCurrentWeek && /*#__PURE__*/React.createElement("button", {
-    className: "week-nav-btn today-btn",
-    onClick: goToToday
-  }, "\uC624\uB298"), /*#__PURE__*/React.createElement("span", {
-    className: "weekly-date"
-  }, weekStart.getMonth() + 1, "/", weekStart.getDate(), " ~ ", weekEndDate.getMonth() + 1, "/", weekEndDate.getDate()), /*#__PURE__*/React.createElement("button", {
-    className: "week-nav-btn",
-    onClick: goToNextWeek
-  }, "\uB2E4\uC74C \uC8FC \u25B6"))), isAdmin && /*#__PURE__*/React.createElement("p", {
-    className: "weekly-tip"
-  }, "\uD83D\uDCA1 \uBE48 \uCE78\uC744 \uD074\uB9AD\uD558\uBA74 \uB0B4\uC6A9\uC744 \uC218\uC815\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4."), /*#__PURE__*/React.createElement("div", {
-    className: "weekly-table-wrapper card"
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "weekly-table"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
-    className: "period-col"
-  }, "\uAD50\uC2DC"), dayDates.map(dd => /*#__PURE__*/React.createElement("th", {
-    key: dd.day,
-    className: dd.isoDate === todayStr ? 'today-col' : ''
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "day-header"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "day-name"
-  }, dd.day, "\uC694\uC77C"), /*#__PURE__*/React.createElement("span", {
-    className: "day-date"
-  }, dd.dateStr)))))), /*#__PURE__*/React.createElement("tbody", null, WEEK_PERIODS.map(p => /*#__PURE__*/React.createElement("tr", {
+  const sameMonth = weekStart.getMonth() === weekEndDate.getMonth();
+  const rangeLabel = `${weekStart.getMonth() + 1}월 ${weekStart.getDate()}일 – ${sameMonth ? '' : `${weekEndDate.getMonth() + 1}월 `}${weekEndDate.getDate()}일`;
+  const renderRow = p => /*#__PURE__*/React.createElement("tr", {
     key: p
-  }, /*#__PURE__*/React.createElement("td", {
-    className: "period-cell"
-  }, p), dayDates.map(dd => {
+  }, /*#__PURE__*/React.createElement("th", {
+    scope: "row",
+    className: "wk-period"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "wk-period-no"
+  }, p, "\uAD50\uC2DC"), /*#__PURE__*/React.createElement("span", {
+    className: "wk-period-time num"
+  }, minToClock(PERIOD_SLOTS[p][0]))), dayDates.map(dd => {
     const plan = currentWeekPlans[dd.day]?.[p] || {};
     const isEditing = editing?.day === dd.day && editing?.period === p;
     const isToday = dd.isoDate === todayStr;
+    const isEmpty = !plan.subject && !plan.content;
     return /*#__PURE__*/React.createElement("td", {
       key: dd.day,
-      className: `plan-cell ${isAdmin ? 'editable' : ''} ${isEditing ? 'is-editing' : ''} ${isToday ? 'today-cell' : ''}`,
-      onClick: () => !isEditing && handleEdit(dd.day, p, plan.subject, plan.content)
+      className: `wk-cell ${isToday ? 'is-today' : ''} ${isEditing ? 'is-editing' : ''}`
     }, isEditing ? /*#__PURE__*/React.createElement("div", {
-      className: "plan-edit-form",
-      onClick: e => e.stopPropagation()
+      className: "wk-form"
     }, /*#__PURE__*/React.createElement("input", {
-      className: "form-input plan-subject-input",
+      className: "form-input",
+      "aria-label": `${dd.day}요일 ${p}교시 과목`,
       placeholder: "\uACFC\uBAA9 (\uC608: \uAD6D\uC5B4)",
       value: editSubject,
       onChange: e => setEditSubject(e.target.value),
       autoFocus: true
     }), /*#__PURE__*/React.createElement("input", {
-      className: "form-input plan-content-input",
-      placeholder: "\uD559\uC2B5 \uB0B4\uC6A9 \uC785\uB825...",
+      className: "form-input",
+      "aria-label": `${dd.day}요일 ${p}교시 학습 내용`,
+      placeholder: "\uD559\uC2B5 \uB0B4\uC6A9",
       value: editContent,
       onChange: e => setEditContent(e.target.value),
       onKeyDown: e => e.key === 'Enter' && handleSave()
     }), /*#__PURE__*/React.createElement("div", {
-      className: "plan-edit-actions"
+      className: "wk-form-actions"
     }, /*#__PURE__*/React.createElement("button", {
-      className: "btn btn-sm btn-primary",
-      onClick: handleSave
-    }, "\uC800\uC7A5"), /*#__PURE__*/React.createElement("button", {
+      type: "button",
       className: "btn btn-sm btn-secondary",
       onClick: () => setEditing(null)
-    }, "\uCDE8\uC18C"))) : /*#__PURE__*/React.createElement("div", {
-      className: "plan-display"
-    }, plan.subject && /*#__PURE__*/React.createElement("div", {
-      className: "plan-subject"
-    }, plan.subject), plan.content && /*#__PURE__*/React.createElement("div", {
-      className: "plan-content"
-    }, plan.content), !plan.subject && !plan.content && /*#__PURE__*/React.createElement("div", {
-      className: "plan-empty"
-    }, "-")));
-  })))))));
+    }, "\uCDE8\uC18C"), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "btn btn-sm btn-primary",
+      onClick: handleSave
+    }, "\uC800\uC7A5"))) : isAdmin ? /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: `wk-plan ${isEmpty ? 'is-empty' : ''}`,
+      "aria-label": `${dd.day}요일 ${p}교시 ${isEmpty ? '입력' : '수정'}`,
+      onClick: () => handleEdit(dd.day, p, plan.subject, plan.content)
+    }, isEmpty ? /*#__PURE__*/React.createElement("span", {
+      className: "wk-add"
+    }, /*#__PURE__*/React.createElement(Icon, {
+      name: "plus",
+      size: 14
+    }), "\uC785\uB825") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+      className: "wk-subject"
+    }, plan.subject), plan.content && /*#__PURE__*/React.createElement("span", {
+      className: "wk-content"
+    }, plan.content))) : /*#__PURE__*/React.createElement("div", {
+      className: `wk-plan ${isEmpty ? 'is-empty' : ''}`
+    }, plan.subject && /*#__PURE__*/React.createElement("span", {
+      className: "wk-subject"
+    }, plan.subject), plan.content && /*#__PURE__*/React.createElement("span", {
+      className: "wk-content"
+    }, plan.content)));
+  }));
+  return /*#__PURE__*/React.createElement("div", {
+    className: "wk"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wk-top"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wk-title"
+  }, /*#__PURE__*/React.createElement("h1", {
+    className: "dash-headline"
+  }, rangeLabel), isCurrentWeek && /*#__PURE__*/React.createElement("span", {
+    className: "wk-chip"
+  }, "\uC774\uBC88 \uC8FC")), /*#__PURE__*/React.createElement("div", {
+    className: "wk-nav"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "round-btn",
+    "aria-label": "\uC774\uC804 \uC8FC",
+    onClick: goToPrevWeek
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "chevron",
+    size: 18
+  })), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-sm btn-secondary",
+    onClick: goToToday,
+    disabled: isCurrentWeek
+  }, "\uC624\uB298"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "round-btn wk-next",
+    "aria-label": "\uB2E4\uC74C \uC8FC",
+    onClick: goToNextWeek
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "chevron",
+    size: 18
+  })))), isAdmin && /*#__PURE__*/React.createElement("p", {
+    className: "dash-edit-hint"
+  }, "\uCE78\uC744 \uB20C\uB7EC \uACFC\uBAA9\uACFC \uD559\uC2B5 \uB0B4\uC6A9\uC744 \uC801\uACE0, Enter\uB85C \uC800\uC7A5\uD558\uC138\uC694."), /*#__PURE__*/React.createElement("div", {
+    className: "wk-card"
+  }, /*#__PURE__*/React.createElement("table", {
+    className: "wk-table"
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
+    scope: "col",
+    className: "wk-corner"
+  }, "\uAD50\uC2DC"), dayDates.map(dd => /*#__PURE__*/React.createElement("th", {
+    scope: "col",
+    key: dd.day,
+    className: dd.isoDate === todayStr ? 'is-today' : ''
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "wk-day"
+  }, dd.day), /*#__PURE__*/React.createElement("span", {
+    className: "wk-date num"
+  }, dd.dateStr))))), /*#__PURE__*/React.createElement("tbody", null, WEEK_PERIODS.map(renderRow)))));
 }
 
 /* ===================================================================

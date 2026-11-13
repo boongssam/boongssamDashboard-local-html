@@ -186,7 +186,7 @@ function getCurrentPeriod() {
   const time = now.getHours() * 60 + now.getMinutes();
   const periods = [
     { p: 1, start: 540, end: 580 }, { p: 2, start: 590, end: 630 },
-    { p: 3, start: 640, end: 680 }, { p: 4, start: 690, end: 730 },
+    { p: 3, start: 650, end: 690 }, { p: 4, start: 750, end: 790 },
     { p: 5, start: 790, end: 830 }, { p: 6, start: 840, end: 880 },
   ];
   const found = periods.find(p => time >= p.start && time <= p.end);
