@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "cream-palette",
+        "value": "*",
+        "files": [
+          "index.html"
+        ],
+        "createdAt": "2026-11-13T06:50:50.312Z",
+        "reason": "user confirmed: approved the warm-gray mockup palette (#F6F3EF) and asked to apply it"
+      }
+    ]
+  }
+}

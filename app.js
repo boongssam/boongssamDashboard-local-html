@@ -886,6 +886,142 @@ function Toast() {
 }
 
 /* ===================================================================
+   Icon (이모지 대신 쓰는 선 아이콘)
+   =================================================================== */
+const ICON_PATHS = {
+  dashboard: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("rect", {
+    x: "3",
+    y: "3",
+    width: "7",
+    height: "9",
+    rx: "1.5"
+  }), /*#__PURE__*/React.createElement("rect", {
+    x: "14",
+    y: "3",
+    width: "7",
+    height: "5",
+    rx: "1.5"
+  }), /*#__PURE__*/React.createElement("rect", {
+    x: "14",
+    y: "12",
+    width: "7",
+    height: "9",
+    rx: "1.5"
+  }), /*#__PURE__*/React.createElement("rect", {
+    x: "3",
+    y: "16",
+    width: "7",
+    height: "5",
+    rx: "1.5"
+  })),
+  weekly: /*#__PURE__*/React.createElement("path", {
+    d: "M4 6h16M4 12h16M4 18h10"
+  }),
+  attendance: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("rect", {
+    x: "4",
+    y: "4",
+    width: "16",
+    height: "17",
+    rx: "2"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M9 2.5v3M15 2.5v3M8.5 13l2.5 2.5 4.5-5"
+  })),
+  learning: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
+    d: "M4 5.5C4 4.7 4.7 4 5.5 4H11v16H5.5c-.8 0-1.5-.7-1.5-1.5z"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M20 5.5c0-.8-.7-1.5-1.5-1.5H13v16h5.5c.8 0 1.5-.7 1.5-1.5z"
+  })),
+  calendar: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("rect", {
+    x: "3.5",
+    y: "5",
+    width: "17",
+    height: "15.5",
+    rx: "2"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M3.5 10h17M8 3v4M16 3v4"
+  })),
+  tools: /*#__PURE__*/React.createElement("path", {
+    d: "M14.5 6.5l3 3M4 20l4.5-1L19 8.5a2.1 2.1 0 0 0-3-3L5.5 16z"
+  }),
+  links: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
+    d: "M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1"
+  })),
+  students: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("circle", {
+    cx: "9",
+    cy: "8",
+    r: "3.5"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"
+  }), /*#__PURE__*/React.createElement("circle", {
+    cx: "17",
+    cy: "9",
+    r: "2.5"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M17.5 14.5c2.2.3 3.6 1.9 4 4.5"
+  })),
+  gear: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
+    d: "M4 7h9M17 7h3M4 17h3M11 17h9"
+  }), /*#__PURE__*/React.createElement("circle", {
+    cx: "15",
+    cy: "7",
+    r: "2"
+  }), /*#__PURE__*/React.createElement("circle", {
+    cx: "9",
+    cy: "17",
+    r: "2"
+  })),
+  plus: /*#__PURE__*/React.createElement("path", {
+    d: "M12 5v14M5 12h14"
+  }),
+  edit: /*#__PURE__*/React.createElement("path", {
+    d: "M14.5 6.5l3 3M4 20l4.5-1L19 8.5a2.1 2.1 0 0 0-3-3L5.5 16z"
+  }),
+  trash: /*#__PURE__*/React.createElement("path", {
+    d: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"
+  }),
+  move: /*#__PURE__*/React.createElement("path", {
+    d: "M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"
+  }),
+  resize: /*#__PURE__*/React.createElement("path", {
+    d: "M20 14v6h-6M20 20l-7-7M10 4H4v6M4 4l7 7"
+  }),
+  menu: /*#__PURE__*/React.createElement("path", {
+    d: "M4 7h16M4 12h16M4 17h16"
+  }),
+  chevron: /*#__PURE__*/React.createElement("path", {
+    d: "M15 5l-7 7 7 7"
+  }),
+  cake: /*#__PURE__*/React.createElement("path", {
+    d: "M4 21h16M5 21v-7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v7M5 16c1.5 1 3 1 4.5 0s3-1 4.5 0 3 1 4.5 0M12 12V8M12 5.5c.8-.6.8-1.6 0-2.5-.8.9-.8 1.9 0 2.5z"
+  }),
+  sun: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("circle", {
+    cx: "12",
+    cy: "12",
+    r: "4"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"
+  }))
+};
+function Icon({
+  name,
+  size = 20
+}) {
+  return /*#__PURE__*/React.createElement("svg", {
+    "aria-hidden": "true",
+    width: size,
+    height: size,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "1.8",
+    strokeLinecap: "round",
+    strokeLinejoin: "round"
+  }, ICON_PATHS[name]);
+}
+
+/* ===================================================================
    Thermometer
    =================================================================== */
 function Thermometer({
@@ -905,132 +1041,72 @@ function Thermometer({
     setIsEditing(false);
   };
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "card-header",
-    style: {
-      alignItems: 'flex-start'
+    className: "wcard-head"
+  }, /*#__PURE__*/React.createElement("h2", {
+    className: "wcard-title"
+  }, "\uC6B0\uB9AC \uBC18 \uCE6D\uCC2C \uC628\uB3C4\uACC4"), isAdmin && !isEditing && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "chip-btn",
+    onClick: () => {
+      setEditGoal(goal);
+      setEditReward(reward || '');
+      setIsEditing(true);
     }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h3", {
-    className: "card-title"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "emoji"
-  }, "\uD83C\uDF21\uFE0F"), " \uC6B0\uB9AC\uBC18 \uCE6D\uCC2C \uC628\uB3C4\uACC4")), !isEditing ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: '0.5rem',
-      alignItems: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "badge badge-primary"
-  }, "\uBAA9\uD45C: ", goal, "\uC810"), isAdmin && /*#__PURE__*/React.createElement("button", {
-    className: "icon-btn",
-    onClick: () => setIsEditing(true)
-  }, "\u270F\uFE0F")) : null), /*#__PURE__*/React.createElement("div", {
-    className: "widget-content",
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      justifyContent: 'space-between',
-      flex: 1,
-      paddingBottom: '1.5rem'
-    }
-  }, !isEditing ? /*#__PURE__*/React.createElement("div", {
-    className: "thermometer-reward-text",
-    style: {
-      marginBottom: '1rem',
-      marginTop: '-0.5rem',
-      textAlign: 'center'
-    }
-  }, "\uBCF4\uC0C1: ", reward || '설정된 보상이 없습니다') : null, isEditing && isAdmin && /*#__PURE__*/React.createElement("div", {
-    className: "thermometer-edit-form",
-    style: {
-      marginTop: '-0.5rem',
-      marginBottom: '1rem'
-    }
-  }, /*#__PURE__*/React.createElement("input", {
+  }, "\uBAA9\uD45C \uBC14\uAFB8\uAE30")), /*#__PURE__*/React.createElement("div", {
+    className: "wcard-body thermo"
+  }, isEditing && isAdmin && /*#__PURE__*/React.createElement("div", {
+    className: "thermo-form"
+  }, /*#__PURE__*/React.createElement("label", {
+    className: "thermo-field"
+  }, /*#__PURE__*/React.createElement("span", null, "\uBAA9\uD45C \uC810\uC218"), /*#__PURE__*/React.createElement("input", {
     type: "number",
+    min: "1",
     value: editGoal,
     onChange: e => setEditGoal(e.target.value),
-    placeholder: "\uBAA9\uD45C \uC810\uC218",
-    className: "form-input",
-    style: {
-      width: '100px'
-    }
-  }), /*#__PURE__*/React.createElement("input", {
+    className: "form-input"
+  })), /*#__PURE__*/React.createElement("label", {
+    className: "thermo-field thermo-field--wide"
+  }, /*#__PURE__*/React.createElement("span", null, "\uBCF4\uC0C1"), /*#__PURE__*/React.createElement("input", {
     type: "text",
     value: editReward,
     onChange: e => setEditReward(e.target.value),
-    placeholder: "\uBCF4\uC0C1 \uB0B4\uC6A9",
-    className: "form-input",
-    style: {
-      flex: 1
-    }
-  }), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-primary",
-    onClick: handleSave
-  }, "\uC800\uC7A5"), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-secondary",
+    placeholder: "\uC608: \uAE08\uC694\uC77C \uC601\uD654 \uAC10\uC0C1",
+    className: "form-input"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "thermo-form-actions"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-secondary btn-sm",
     onClick: () => setIsEditing(false)
-  }, "\uCDE8\uC18C")), /*#__PURE__*/React.createElement("div", {
-    className: "thermometer-content",
-    style: {
-      flex: 1,
-      display: 'flex',
-      flexDirection: 'column',
-      justifyContent: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "thermometer-score-display",
-    style: {
-      marginBottom: '1rem'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "current-score-huge"
-  }, current, /*#__PURE__*/React.createElement("span", {
-    className: "unit"
-  }, "\uC810")), /*#__PURE__*/React.createElement("div", {
-    className: "score-percent"
-  }, "\uD604\uC7AC \uBAA9\uD45C\uC758 ", /*#__PURE__*/React.createElement("strong", null, percentage.toFixed(1), "%"), " \uB2EC\uC131 \uC911! \uD83D\uDE80")), /*#__PURE__*/React.createElement("div", {
-    className: "thermometer-horizontal",
-    style: {
-      marginBottom: '1.5rem'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "thermometer-track"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: `thermometer-progress ${isGoalReached ? 'goal-reached' : ''}`,
+  }, "\uCDE8\uC18C"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-primary btn-sm",
+    onClick: handleSave
+  }, "\uC800\uC7A5"))), /*#__PURE__*/React.createElement("div", {
+    className: "thermo-score"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "num-xl"
+  }, current), /*#__PURE__*/React.createElement("span", {
+    className: "thermo-goal"
+  }, "/ ", goal, "\uC810")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "thermo-track",
+    role: "progressbar",
+    "aria-label": "\uCE6D\uCC2C \uC810\uC218",
+    "aria-valuemin": 0,
+    "aria-valuemax": goal,
+    "aria-valuenow": current
+  }, /*#__PURE__*/React.createElement("span", {
+    className: isGoalReached ? 'is-done' : '',
     style: {
       width: `${percentage}%`
     }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "thermometer-glow"
   })), /*#__PURE__*/React.createElement("div", {
-    className: "thermometer-markers-h"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "marker-h",
-    style: {
-      left: '25%'
-    }
-  }, /*#__PURE__*/React.createElement("span", null, "25%")), /*#__PURE__*/React.createElement("div", {
-    className: "marker-h",
-    style: {
-      left: '50%'
-    }
-  }, /*#__PURE__*/React.createElement("span", null, "\uC808\uBC18!")), /*#__PURE__*/React.createElement("div", {
-    className: "marker-h",
-    style: {
-      left: '75%'
-    }
-  }, /*#__PURE__*/React.createElement("span", null, "75%")), /*#__PURE__*/React.createElement("div", {
-    className: "marker-h",
-    style: {
-      left: '100%'
-    }
-  }, /*#__PURE__*/React.createElement("span", null, "\uBAA9\uD45C \uB2EC\uC131 \uD83C\uDFC6")))))), isGoalReached && !isEditing && /*#__PURE__*/React.createElement("div", {
-    className: "thermometer-celebration",
-    style: {
-      marginTop: '0.5rem'
-    }
-  }, "\uD83C\uDF89 \uCD95\uD558\uD569\uB2C8\uB2E4! ", reward ? `'${reward}'` : '학급 전체 보상', "\uC744(\uB97C) \uB2EC\uC131\uD588\uC2B5\uB2C8\uB2E4! \uD83C\uDF89")));
+    className: "thermo-ticks"
+  }, [0, 0.25, 0.5, 0.75, 1].map(f => /*#__PURE__*/React.createElement("span", {
+    key: f
+  }, Math.round(goal * f))))), /*#__PURE__*/React.createElement("p", {
+    className: "thermo-note"
+  }, isGoalReached ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("strong", null, "\uBAA9\uD45C \uB2EC\uC131!"), " ", reward ? /*#__PURE__*/React.createElement(React.Fragment, null, "\uC774\uC81C ", /*#__PURE__*/React.createElement("strong", null, reward), " \uC2DC\uAC04\uC774\uC5D0\uC694.") : '다 같이 축하해요.') : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("strong", null, goal - current, "\uC810\uB9CC \uB354!"), " ", reward ? /*#__PURE__*/React.createElement(React.Fragment, null, "\uBAA9\uD45C\uB97C \uCC44\uC6B0\uBA74 ", /*#__PURE__*/React.createElement("strong", null, reward), "\uC744(\uB97C) \uD574\uC694.") : '보상을 정하면 여기에 보여요.'))));
 }
 
 /* ===================================================================
@@ -1127,35 +1203,51 @@ const STUDENT_ALLOWED_PATHS = ['/', '/weekly', '/learning', '/calendar', '/tools
 const NAV_ITEMS = [{
   path: '/',
   label: '대시보드',
-  icon: '🏠'
+  icon: /*#__PURE__*/React.createElement(Icon, {
+    name: "dashboard"
+  })
 }, {
   path: '/weekly',
   label: '주간 일정',
-  icon: '📅'
+  icon: /*#__PURE__*/React.createElement(Icon, {
+    name: "weekly"
+  })
 }, {
   path: '/attendance',
   label: '출석 관리',
-  icon: '✅'
+  icon: /*#__PURE__*/React.createElement(Icon, {
+    name: "attendance"
+  })
 }, {
   path: '/learning',
   label: '학습 관리',
-  icon: '📚'
+  icon: /*#__PURE__*/React.createElement(Icon, {
+    name: "learning"
+  })
 }, {
   path: '/calendar',
   label: '일정 & 공지',
-  icon: '🗓️'
+  icon: /*#__PURE__*/React.createElement(Icon, {
+    name: "calendar"
+  })
 }, {
   path: '/tools',
   label: '학급 도구',
-  icon: '🧰'
+  icon: /*#__PURE__*/React.createElement(Icon, {
+    name: "tools"
+  })
 }, {
   path: '/links',
   label: '바로가기',
-  icon: '🔗'
+  icon: /*#__PURE__*/React.createElement(Icon, {
+    name: "links"
+  })
 }, {
   path: '/students',
   label: '학생 관리',
-  icon: '👥'
+  icon: /*#__PURE__*/React.createElement(Icon, {
+    name: "students"
+  })
 }];
 const PAGE_TITLES = {
   '/': '대시보드',
@@ -1195,15 +1287,14 @@ function Layout({
     isAdmin,
     settings
   } = state;
-  const toggle = () => {
-    if (isAdmin) logout();else setShowPinModal(true);
-  };
   const doLogin = () => {
     if (login(passwordInput)) {
       setShowPinModal(false);
       setPasswordInput('');
     }
   };
+  const today = new Date();
+  const isDashboard = pathname === '/';
   const pageTitle = PAGE_TITLES[pathname] || '대시보드';
   const isReadOnlyPath = !isAdmin && !STUDENT_ALLOWED_PATHS.includes(pathname);
   return /*#__PURE__*/React.createElement("div", {
@@ -1218,19 +1309,25 @@ function Layout({
   }, /*#__PURE__*/React.createElement("div", {
     className: "sidebar-logo"
   }, /*#__PURE__*/React.createElement("span", {
-    className: "logo-icon"
-  }, "\uD83C\uDFEB"), /*#__PURE__*/React.createElement("div", {
+    className: "logo-mark"
+  }, "4\xB72"), /*#__PURE__*/React.createElement("div", {
     className: "logo-text"
   }, /*#__PURE__*/React.createElement("h1", null, "\uD558\uB0A8\uC911\uC559\uCD08\uB4F1\uD559\uAD50"), /*#__PURE__*/React.createElement("span", {
     className: "logo-sub"
-  }, "4\uD559\uB144 2\uBC18"))), /*#__PURE__*/React.createElement("button", {
+  }, "4\uD559\uB144 2\uBC18 \xB7 \uAE40\uB300\uBD95 \uC120\uC0DD\uB2D8"))), /*#__PURE__*/React.createElement("button", {
+    type: "button",
     className: "sidebar-toggle",
+    "aria-label": collapsed ? '메뉴 펼치기' : '메뉴 접기',
     onClick: () => {
       setCollapsed(!collapsed);
       setSidebarOpen(false);
     }
-  }, "\u25C0")), /*#__PURE__*/React.createElement("nav", {
-    className: "sidebar-nav"
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "chevron",
+    size: 18
+  }))), /*#__PURE__*/React.createElement("nav", {
+    className: "sidebar-nav",
+    "aria-label": "\uC8FC \uBA54\uB274"
   }, NAV_ITEMS.map(item => {
     if (item.path === '/attendance' && !isAdmin) return null;
     const isAllowed = isAdmin || STUDENT_ALLOWED_PATHS.includes(item.path);
@@ -1238,6 +1335,7 @@ function Layout({
     return /*#__PURE__*/React.createElement("a", {
       key: item.path,
       href: `#${item.path}`,
+      "aria-current": isActive ? 'page' : undefined,
       className: `nav-item ${isActive ? 'active' : ''} ${!isAllowed ? 'nav-disabled' : ''}`,
       onClick: () => setSidebarOpen(false)
     }, /*#__PURE__*/React.createElement("span", {
@@ -1246,44 +1344,58 @@ function Layout({
       className: "nav-label"
     }, item.label), !isAllowed && /*#__PURE__*/React.createElement("span", {
       className: "nav-lock"
-    }, "\uD83D\uDD12"));
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "sidebar-footer"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "teacher-profile"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "teacher-avatar"
-  }, "\uD83D\uDC69\u200D\uD83C\uDFEB"), /*#__PURE__*/React.createElement("div", {
-    className: "teacher-info"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "teacher-name"
-  }, "\uB2F4\uC784\uAD50\uC0AC"), /*#__PURE__*/React.createElement("span", {
-    className: "teacher-role"
-  }, "\uAE40\uB300\uBD95 \uC120\uC0DD\uB2D8"))))), /*#__PURE__*/React.createElement("main", {
+    }, "\uC120\uC0DD\uB2D8"));
+  }))), /*#__PURE__*/React.createElement("main", {
     className: "main-content"
   }, /*#__PURE__*/React.createElement("header", {
     className: "page-header"
   }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
     className: "menu-btn",
+    "aria-label": "\uBA54\uB274 \uC5F4\uAE30",
     onClick: () => setSidebarOpen(true)
-  }, "\u2630"), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "menu"
+  })), /*#__PURE__*/React.createElement("div", {
     className: "header-content"
-  }, /*#__PURE__*/React.createElement("h2", {
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "header-titles"
+  }, isDashboard ? /*#__PURE__*/React.createElement("h2", {
     className: "page-title"
-  }, pageTitle), /*#__PURE__*/React.createElement("div", {
-    className: "header-actions"
-  }, /*#__PURE__*/React.createElement("span", {
+  }, formatDate(today, 'md'), " ", getDayName(today), "\uC694\uC77C") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
     className: "page-date"
-  }, formatDate(new Date())), isAdmin && /*#__PURE__*/React.createElement("button", {
-    className: "admin-btn settings-btn",
+  }, formatDate(today)), /*#__PURE__*/React.createElement("h2", {
+    className: "page-title"
+  }, pageTitle))), /*#__PURE__*/React.createElement("div", {
+    className: "header-actions"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "mode-switch",
+    role: "group",
+    "aria-label": "\uBCF4\uAE30 \uBAA8\uB4DC"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    "aria-pressed": !isAdmin,
+    onClick: () => {
+      if (isAdmin) logout();
+    }
+  }, "\uD559\uC0DD \uD654\uBA74"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    "aria-pressed": isAdmin,
+    onClick: () => {
+      if (!isAdmin) setShowPinModal(true);
+    }
+  }, "\uC120\uC0DD\uB2D8")), isAdmin && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "round-btn",
+    "aria-label": "\uC124\uC815",
     onClick: () => setShowSettings(true)
-  }, "\u2699\uFE0F"), /*#__PURE__*/React.createElement("button", {
-    className: `admin-btn admin-toggle-btn ${isAdmin ? 'active' : ''}`,
-    onClick: toggle
-  }, isAdmin ? '🔓 선생님' : '🔒 학생')))), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "gear"
+  }))))), /*#__PURE__*/React.createElement("div", {
     className: `pages-container ${isReadOnlyPath ? 'student-read-only' : ''}`
   }, children)), /*#__PURE__*/React.createElement("nav", {
-    className: "mobile-nav"
+    className: "mobile-nav",
+    "aria-label": "\uC8FC \uBA54\uB274"
   }, NAV_ITEMS.map(item => {
     if (item.path === '/attendance' && !isAdmin) return null;
     const isAllowed = isAdmin || STUDENT_ALLOWED_PATHS.includes(item.path);
@@ -1291,6 +1403,7 @@ function Layout({
     return /*#__PURE__*/React.createElement("a", {
       key: item.path,
       href: `#${item.path}`,
+      "aria-current": isActive ? 'page' : undefined,
       className: `mobile-nav-item ${isActive ? 'active' : ''} ${!isAllowed ? 'nav-disabled' : ''}`
     }, item.icon, /*#__PURE__*/React.createElement("span", null, MOBILE_LABELS[item.path]));
   })), showPinModal && /*#__PURE__*/React.createElement("div", {
@@ -1304,8 +1417,10 @@ function Layout({
     }
   }, /*#__PURE__*/React.createElement("div", {
     className: "modal-header"
-  }, /*#__PURE__*/React.createElement("h3", null, "\uD83D\uDD12 ", settings.adminPassword ? '선생님 로그인' : '선생님 비밀번호 설정'), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("h3", null, settings.adminPassword ? '선생님 로그인' : '선생님 비밀번호 설정'), /*#__PURE__*/React.createElement("button", {
+    type: "button",
     className: "close-btn",
+    "aria-label": "\uB2EB\uAE30",
     onClick: () => setShowPinModal(false)
   }, "\xD7")), /*#__PURE__*/React.createElement("div", {
     className: "modal-body",
@@ -1317,16 +1432,18 @@ function Layout({
   }, !settings.adminPassword && /*#__PURE__*/React.createElement("p", {
     style: {
       fontSize: '0.85rem',
-      color: 'var(--text-light)'
+      color: 'var(--text-secondary)'
     }
   }, "\uCC98\uC74C \uC0AC\uC6A9\uD558\uC2DC\uB294\uAD70\uC694! \uC55E\uC73C\uB85C \uC120\uC0DD\uB2D8 \uBAA8\uB4DC \uC804\uD658\uC5D0 \uC4F8 \uBE44\uBC00\uBC88\uD638\uB97C \uC815\uD574\uC8FC\uC138\uC694."), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    htmlFor: "admin-password",
     style: {
       display: 'block',
       marginBottom: '0.5rem',
       fontSize: '0.9rem',
-      color: 'var(--text-light)'
+      color: 'var(--text-secondary)'
     }
   }, "\uBE44\uBC00\uBC88\uD638"), /*#__PURE__*/React.createElement("input", {
+    id: "admin-password",
     type: "password",
     className: "form-input",
     placeholder: "\uBE44\uBC00\uBC88\uD638",
@@ -1337,6 +1454,7 @@ function Layout({
   }))), /*#__PURE__*/React.createElement("div", {
     className: "modal-footer"
   }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
     className: "btn btn-primary",
     style: {
       width: '100%'
@@ -1348,8 +1466,247 @@ function Layout({
 }
 
 /* ===================================================================
-   DashboardPage (드래그/리사이즈 없는 고정 그리드 버전)
+   DashboardGrid — 위젯 이동/크기 조절 (라이브러리 없이 12열 격자)
    =================================================================== */
+const GRID_COLS = 12,
+  GRID_ROW_H = 72,
+  GRID_GAP = 20,
+  GRID_MIN_W = 3,
+  GRID_MIN_H = 3,
+  GRID_MAX_H = 12;
+const GRID_STACK_BELOW = 900; // 이보다 좁으면 한 줄로 쌓고 편집은 끔
+const DEFAULT_DASHBOARD_LAYOUT = [{
+  id: 'schedule',
+  x: 0,
+  y: 0,
+  w: 8,
+  h: 4
+}, {
+  id: 'thermometer',
+  x: 8,
+  y: 0,
+  w: 4,
+  h: 4
+}, {
+  id: 'lunch',
+  x: 0,
+  y: 4,
+  w: 4,
+  h: 5
+}, {
+  id: 'dday',
+  x: 4,
+  y: 4,
+  w: 4,
+  h: 5
+}, {
+  id: 'ranking',
+  x: 8,
+  y: 4,
+  w: 4,
+  h: 5
+}, {
+  id: 'notices',
+  x: 0,
+  y: 9,
+  w: 12,
+  h: 4
+}];
+function clampItem(it) {
+  const w = Math.max(GRID_MIN_W, Math.min(GRID_COLS, Math.round(it.w)));
+  const h = Math.max(GRID_MIN_H, Math.min(GRID_MAX_H, Math.round(it.h)));
+  return {
+    ...it,
+    w,
+    h,
+    x: Math.max(0, Math.min(GRID_COLS - w, Math.round(it.x))),
+    y: Math.max(0, Math.round(it.y))
+  };
+}
+const gridCollides = (a, b) => a.id !== b.id && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+// 움직인 위젯은 그 자리에 두고, 나머지는 위에서부터 빈 자리를 찾아 채운 뒤 움직인 위젯도 위로 당김
+function settleLayout(layout, activeId) {
+  const active = layout.find(i => i.id === activeId);
+  const placed = active ? [active] : [];
+  const rest = layout.filter(i => i !== active).sort((a, b) => a.y - b.y || a.x - b.x);
+  for (const it of rest) {
+    let y = 0;
+    while (placed.some(p => gridCollides({
+      ...it,
+      y
+    }, p))) y++;
+    placed.push({
+      ...it,
+      y
+    });
+  }
+  if (active) {
+    let y = active.y;
+    while (y > 0 && !placed.some(p => gridCollides({
+      ...active,
+      y: y - 1
+    }, p))) y--;
+    placed[0] = {
+      ...active,
+      y
+    };
+  }
+  return layout.map(i => placed.find(p => p.id === i.id));
+}
+
+// 저장된 배치(예전 Next.js 버전의 {lg:[{i,...}]} 형식 포함)를 읽고, 모르는 값은 기본 배치로
+function normalizeLayout(saved) {
+  const list = Array.isArray(saved) ? saved : saved && Array.isArray(saved.lg) ? saved.lg.map(i => ({
+    ...i,
+    id: i.i
+  })) : [];
+  const merged = DEFAULT_DASHBOARD_LAYOUT.map(d => {
+    const s = list.find(x => x && x.id === d.id);
+    return s && [s.x, s.y, s.w, s.h].every(Number.isFinite) ? clampItem({
+      ...d,
+      x: s.x,
+      y: s.y,
+      w: s.w,
+      h: s.h
+    }) : d;
+  });
+  return settleLayout(merged, null);
+}
+function DashboardGrid({
+  layout,
+  editing,
+  onChange,
+  widgets
+}) {
+  const boxRef = useRef(null);
+  const dragRef = useRef(null);
+  const [width, setWidth] = useState(0);
+  const [draft, setDraft] = useState(null);
+  const [activeId, setActiveId] = useState(null);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => setWidth(entries[0].contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const shown = draft || layout;
+  const stacked = width > 0 && width < GRID_STACK_BELOW;
+  const colW = (width - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS;
+  const unitX = colW + GRID_GAP,
+    unitY = GRID_ROW_H + GRID_GAP;
+  const apply = (id, mode, start, dc, dr) => {
+    const cand = clampItem(mode === 'move' ? {
+      ...start,
+      x: start.x + dc,
+      y: start.y + dr
+    } : {
+      ...start,
+      w: start.w + dc,
+      h: start.h + dr
+    });
+    return settleLayout(layout.map(i => i.id === id ? cand : i), id);
+  };
+  const onPointerDown = (e, id, mode) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = {
+      id,
+      mode,
+      sx: e.clientX,
+      sy: e.clientY,
+      start: layout.find(i => i.id === id)
+    };
+    setActiveId(id);
+  };
+  const onPointerMove = e => {
+    const d = dragRef.current;
+    if (!d) return;
+    setDraft(apply(d.id, d.mode, d.start, Math.round((e.clientX - d.sx) / unitX), Math.round((e.clientY - d.sy) / unitY)));
+  };
+  const onPointerUp = () => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    setActiveId(null);
+    if (draft) onChange(draft);
+    setDraft(null);
+  };
+  // 키보드: 화살표 = 이동, Shift+화살표 = 크기 조절
+  const onKeyDown = (e, id) => {
+    const delta = {
+      ArrowLeft: [-1, 0],
+      ArrowRight: [1, 0],
+      ArrowUp: [0, -1],
+      ArrowDown: [0, 1]
+    }[e.key];
+    if (!delta) return;
+    e.preventDefault();
+    onChange(apply(id, e.shiftKey ? 'resize' : 'move', layout.find(i => i.id === id), delta[0], delta[1]));
+  };
+  const ordered = [...shown].sort((a, b) => a.y - b.y || a.x - b.x);
+  const rows = Math.max(...shown.map(i => i.y + i.h));
+  return /*#__PURE__*/React.createElement("div", {
+    ref: boxRef,
+    className: `dgrid ${stacked ? 'is-stacked' : ''} ${editing && !stacked ? 'is-editing' : ''}`,
+    style: stacked || !width ? undefined : {
+      height: rows * unitY - GRID_GAP
+    }
+  }, ordered.map(it => {
+    const w = widgets[it.id];
+    if (!w) return null;
+    const style = stacked || !width ? undefined : {
+      left: it.x * unitX,
+      top: it.y * unitY,
+      width: it.w * colW + (it.w - 1) * GRID_GAP,
+      height: it.h * GRID_ROW_H + (it.h - 1) * GRID_GAP
+    };
+    return /*#__PURE__*/React.createElement("section", {
+      key: it.id,
+      className: `wcard ${w.className || ''} ${activeId === it.id ? 'is-active' : ''}`,
+      style: style,
+      "aria-label": w.label
+    }, w.content, editing && !stacked && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "grid-handle grid-handle--move",
+      "aria-label": `${w.label} 옮기기 (화살표 키로 이동, Shift+화살표로 크기 조절)`,
+      onPointerDown: e => onPointerDown(e, it.id, 'move'),
+      onPointerMove: onPointerMove,
+      onPointerUp: onPointerUp,
+      onPointerCancel: onPointerUp,
+      onKeyDown: e => onKeyDown(e, it.id)
+    }, /*#__PURE__*/React.createElement(Icon, {
+      name: "move",
+      size: 16
+    }), "\uC62E\uAE30\uAE30"), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "grid-handle grid-handle--resize",
+      "aria-label": `${w.label} 크기 조절`,
+      tabIndex: -1,
+      onPointerDown: e => onPointerDown(e, it.id, 'resize'),
+      onPointerMove: onPointerMove,
+      onPointerUp: onPointerUp,
+      onPointerCancel: onPointerUp
+    }, /*#__PURE__*/React.createElement(Icon, {
+      name: "resize",
+      size: 14
+    }))));
+  }));
+}
+
+/* ===================================================================
+   DashboardPage
+   =================================================================== */
+const PERIOD_SLOTS = {
+  1: [540, 580],
+  2: [590, 630],
+  3: [640, 680],
+  4: [690, 730],
+  5: [790, 830],
+  6: [840, 880]
+};
+const minToClock = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 function DashboardPage() {
   const {
     state,
@@ -1376,7 +1733,7 @@ function DashboardPage() {
   const [newDday, setNewDday] = useState({
     name: '',
     date: '',
-    emoji: '🎉'
+    emoji: ''
   });
   const [newNotice, setNewNotice] = useState({
     title: '',
@@ -1385,6 +1742,8 @@ function DashboardPage() {
   });
   const [showNoticeForm, setShowNoticeForm] = useState(false);
   const [editNoticeId, setEditNoticeId] = useState(null);
+  const [editingLayout, setEditingLayout] = useState(false);
+  const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     (async () => {
       setIsLoadingLunch(true);
@@ -1394,10 +1753,24 @@ function DashboardPage() {
     (async () => {
       setHoliday(await fetchSchoolHoliday());
     })();
+    const t = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(t);
   }, []);
-  const today = new Date();
+  useEffect(() => {
+    if (!isAdmin) setEditingLayout(false);
+  }, [isAdmin]);
+  const today = now;
   const dayName = getDayName(today);
-  const currentPeriod = getCurrentPeriod();
+  const nowMin = today.getHours() * 60 + today.getMinutes();
+  const closeNoticeForm = () => {
+    setShowNoticeForm(false);
+    setEditNoticeId(null);
+    setNewNotice({
+      title: '',
+      content: '',
+      type: 'general'
+    });
+  };
   const handleAddNotice = () => {
     if (!newNotice.title.trim()) return;
     const dateStr = toISODate(today);
@@ -1416,13 +1789,7 @@ function DashboardPage() {
       });
       showToast('공지사항이 등록되었습니다', 'success');
     }
-    setNewNotice({
-      title: '',
-      content: '',
-      type: 'general'
-    });
-    setShowNoticeForm(false);
-    setEditNoticeId(null);
+    closeNoticeForm();
   };
   const handleEditNotice = n => {
     setNewNotice({
@@ -1439,25 +1806,22 @@ function DashboardPage() {
       showToast('공지사항이 삭제되었습니다', 'success');
     }
   };
-  const weekStart = getWeekStart(today);
-  const weekKey = toISODate(weekStart);
+  const weekKey = toISODate(getWeekStart(today));
   const todayPlan = weeklyPlans[weekKey]?.[dayName] || {};
-  const PERIOD_TIMES = {
-    1: '09:00-09:40',
-    2: '09:50-10:30',
-    3: '10:40-11:20',
-    4: '11:30-12:10',
-    5: '13:10-13:50',
-    6: '14:00-14:40'
-  };
-  const todaySchedule = Object.keys(todayPlan).map(Number).sort((a, b) => a - b).filter(p => todayPlan[p]?.subject).map(p => ({
+  const todaySchedule = Object.keys(todayPlan).map(Number).sort((a, b) => a - b).filter(p => todayPlan[p]?.subject && PERIOD_SLOTS[p]).map(p => ({
     period: p,
     subject: todayPlan[p].subject,
     content: todayPlan[p].content || '',
-    time: PERIOD_TIMES[p] || ''
+    start: PERIOD_SLOTS[p][0],
+    end: PERIOD_SLOTS[p][1]
   }));
+  const currentClass = todaySchedule.find(c => nowMin >= c.start && nowMin <= c.end);
+  const nextClass = todaySchedule.find(c => c.start > nowMin);
+  let headline;
+  if (holiday?.isHoliday) headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uC624\uB298\uC740 ", /*#__PURE__*/React.createElement("em", null, holiday.name), ", \uC26C\uB294 \uB0A0\uC774\uC5D0\uC694");else if (currentClass) headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uC9C0\uAE08\uC740 ", /*#__PURE__*/React.createElement("em", null, currentClass.period, "\uAD50\uC2DC ", currentClass.subject), ", ", currentClass.end - nowMin, "\uBD84 \uB0A8\uC558\uC5B4\uC694");else if (nextClass && nextClass === todaySchedule[0]) headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uC624\uB298 \uCCAB \uC218\uC5C5\uC740 ", /*#__PURE__*/React.createElement("em", null, nextClass.period, "\uAD50\uC2DC ", nextClass.subject), "\uC608\uC694");else if (nextClass) headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uB2E4\uC74C\uC740 ", /*#__PURE__*/React.createElement("em", null, nextClass.period, "\uAD50\uC2DC ", nextClass.subject), ", ", nextClass.start - nowMin, "\uBD84 \uB4A4\uC5D0 \uC2DC\uC791\uD574\uC694");else if (todaySchedule.length) headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uC624\uB298 \uC218\uC5C5\uC774 \uBAA8\uB450 \uB05D\uB0AC\uC5B4\uC694. \uC218\uACE0\uD588\uC5B4\uC694!");else headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uC624\uB298\uC740 \uB4F1\uB85D\uB41C \uC218\uC5C5\uC774 \uC5C6\uC5B4\uC694");
   const birthdayStudents = students.filter(s => isTodayBirthday(s.birthday));
   const ddaySorted = [...ddays].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const firstUpcoming = ddaySorted.find(ev => !getDday(ev.date).startsWith('D+'));
   const handleAddDday = () => {
     if (!newDday.name || !newDday.date) {
       showToast('이름과 날짜를 입력해주세요.', 'error');
@@ -1467,12 +1831,11 @@ function DashboardPage() {
     setNewDday({
       name: '',
       date: '',
-      emoji: '🎉'
+      emoji: ''
     });
     setShowDdayForm(false);
     showToast('D-Day가 추가되었습니다.', 'success');
   };
-  const handleDeleteDday = id => deleteDDay(id);
   const handleUpdateThermometer = (goal, reward) => {
     updateSettings({
       ...settings,
@@ -1482,269 +1845,322 @@ function DashboardPage() {
     showToast('우리반 온도계 설정이 변경되었습니다.', 'success');
   };
   const topStudents = [...students].sort((a, b) => (b.points || 0) - (a.points || 0)).slice(0, 5);
+  const topScore = Math.max(1, topStudents[0]?.points || 0);
   const totalPoints = students.reduce((sum, s) => sum + (s.points || 0), 0);
   const goalPoints = settings?.thermometerGoal || 1500;
-  const thermometerReward = settings?.thermometerReward || '';
+  const lunchItems = lunchInfo ? lunchInfo.menu.split('\n').map(s => s.trim()).filter(Boolean) : [];
+  const layout = useMemo(() => normalizeLayout(settings?.dashboardLayouts), [settings?.dashboardLayouts]);
+  const saveLayout = next => updateSettings({
+    dashboardLayouts: next.map(({
+      id,
+      x,
+      y,
+      w,
+      h
+    }) => ({
+      id,
+      x,
+      y,
+      w,
+      h
+    }))
+  });
+  const resetLayout = () => {
+    saveLayout(DEFAULT_DASHBOARD_LAYOUT);
+    showToast('기본 배치로 되돌렸습니다.', 'success');
+  };
+  const shortDate = iso => {
+    const d = new Date(iso);
+    return `${d.getMonth() + 1}월 ${d.getDate()}일 ${getDayName(d)}요일`;
+  };
+  const noticeTypeLabel = {
+    important: '중요',
+    newsletter: '통신문',
+    general: '일반'
+  };
+  const widgets = {
+    schedule: {
+      label: '오늘의 시간표',
+      content: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+        className: "wcard-head"
+      }, /*#__PURE__*/React.createElement("h2", {
+        className: "wcard-title"
+      }, "\uC624\uB298\uC758 \uC2DC\uAC04\uD45C"), /*#__PURE__*/React.createElement("a", {
+        href: "#/weekly",
+        className: "wcard-link"
+      }, "\uC8FC\uAC04 \uC77C\uC815\uC5D0\uC11C \uC218\uC815")), /*#__PURE__*/React.createElement("div", {
+        className: "wcard-body"
+      }, todaySchedule.length > 0 ? /*#__PURE__*/React.createElement("ol", {
+        className: "periods"
+      }, todaySchedule.map(c => {
+        const status = nowMin > c.end ? 'done' : currentClass === c ? 'now' : 'next';
+        const progress = status === 'now' ? Math.round((nowMin - c.start) / (c.end - c.start) * 100) : status === 'done' ? 100 : 0;
+        return /*#__PURE__*/React.createElement("li", {
+          key: c.period,
+          className: `period is-${status}`,
+          "aria-current": status === 'now' ? 'time' : undefined
+        }, /*#__PURE__*/React.createElement("span", {
+          className: "period-time"
+        }, c.period, "\uAD50\uC2DC \xB7 ", minToClock(c.start)), /*#__PURE__*/React.createElement("span", {
+          className: "period-subject"
+        }, c.subject), c.content && /*#__PURE__*/React.createElement("span", {
+          className: "period-content"
+        }, c.content), /*#__PURE__*/React.createElement("span", {
+          className: "period-bar"
+        }, /*#__PURE__*/React.createElement("span", {
+          style: {
+            width: `${progress}%`
+          }
+        })));
+      })) : /*#__PURE__*/React.createElement("div", {
+        className: "wcard-empty"
+      }, "\uC624\uB298 \uC2DC\uAC04\uD45C\uAC00 \uBE44\uC5B4 \uC788\uC5B4\uC694. \uC8FC\uAC04 \uC77C\uC815\uC5D0\uC11C \uC785\uB825\uD574 \uC8FC\uC138\uC694.")))
+    },
+    thermometer: {
+      label: '우리 반 칭찬 온도계',
+      className: 'wcard--accent',
+      content: /*#__PURE__*/React.createElement(Thermometer, {
+        current: totalPoints,
+        goal: goalPoints,
+        reward: settings?.thermometerReward || '',
+        isAdmin: isAdmin,
+        onUpdate: handleUpdateThermometer
+      })
+    },
+    lunch: {
+      label: '오늘의 급식',
+      content: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+        className: "wcard-head"
+      }, /*#__PURE__*/React.createElement("h2", {
+        className: "wcard-title"
+      }, "\uC624\uB298\uC758 \uAE09\uC2DD"), lunchInfo?.calories && /*#__PURE__*/React.createElement("span", {
+        className: "wcard-meta num"
+      }, lunchInfo.calories)), /*#__PURE__*/React.createElement("div", {
+        className: "wcard-body"
+      }, isLoadingLunch ? /*#__PURE__*/React.createElement("div", {
+        className: "wcard-empty"
+      }, "\uC2DD\uB2E8\uD45C\uB97C \uBD88\uB7EC\uC624\uB294 \uC911\uC774\uC5D0\uC694\u2026") : lunchItems.length ? /*#__PURE__*/React.createElement("ul", {
+        className: "lunch-list"
+      }, lunchItems.map((m, i) => /*#__PURE__*/React.createElement("li", {
+        key: i
+      }, m))) : /*#__PURE__*/React.createElement("div", {
+        className: "wcard-empty"
+      }, "\uC624\uB298\uC740 \uAE09\uC2DD \uC815\uBCF4\uAC00 \uC5C6\uC5B4\uC694.")))
+    },
+    dday: {
+      label: '다가오는 날',
+      content: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+        className: "wcard-head"
+      }, /*#__PURE__*/React.createElement("h2", {
+        className: "wcard-title"
+      }, "\uB2E4\uAC00\uC624\uB294 \uB0A0"), isAdmin && /*#__PURE__*/React.createElement("button", {
+        type: "button",
+        className: "round-btn round-btn--sm",
+        "aria-label": showDdayForm ? 'D-Day 추가 닫기' : 'D-Day 추가',
+        "aria-expanded": showDdayForm,
+        onClick: () => setShowDdayForm(!showDdayForm)
+      }, /*#__PURE__*/React.createElement(Icon, {
+        name: "plus",
+        size: 16
+      }))), /*#__PURE__*/React.createElement("div", {
+        className: "wcard-body"
+      }, showDdayForm && isAdmin && /*#__PURE__*/React.createElement("div", {
+        className: "dday-form"
+      }, /*#__PURE__*/React.createElement("input", {
+        type: "text",
+        "aria-label": "\uC774\uB984",
+        placeholder: "\uC608: \uD604\uC7A5\uCCB4\uD5D8\uD559\uC2B5",
+        value: newDday.name,
+        onChange: e => setNewDday({
+          ...newDday,
+          name: e.target.value
+        }),
+        className: "form-input"
+      }), /*#__PURE__*/React.createElement("input", {
+        type: "date",
+        "aria-label": "\uB0A0\uC9DC",
+        value: newDday.date,
+        onChange: e => setNewDday({
+          ...newDday,
+          date: e.target.value
+        }),
+        className: "form-input"
+      }), /*#__PURE__*/React.createElement("button", {
+        type: "button",
+        className: "btn btn-primary btn-sm",
+        onClick: handleAddDday
+      }, "\uCD94\uAC00")), ddaySorted.length === 0 ? /*#__PURE__*/React.createElement("div", {
+        className: "wcard-empty"
+      }, "\uB4F1\uB85D\uB41C D-Day\uAC00 \uC5C6\uC5B4\uC694.") : /*#__PURE__*/React.createElement("ul", {
+        className: "dday-rows"
+      }, ddaySorted.map((ev, i) => /*#__PURE__*/React.createElement("li", {
+        key: ev.id || i,
+        className: `dday-row ${ev === firstUpcoming ? 'is-next' : ''}`
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "dday-num num"
+      }, getDday(ev.date)), /*#__PURE__*/React.createElement("span", {
+        className: "dday-text"
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "dday-title"
+      }, ev.emoji ? `${ev.emoji} ` : '', ev.name), /*#__PURE__*/React.createElement("span", {
+        className: "dday-when"
+      }, shortDate(ev.date))), isAdmin && /*#__PURE__*/React.createElement("button", {
+        type: "button",
+        className: "icon-ghost",
+        "aria-label": `${ev.name} 삭제`,
+        onClick: () => deleteDDay(ev.id)
+      }, /*#__PURE__*/React.createElement(Icon, {
+        name: "trash",
+        size: 16
+      })))))))
+    },
+    ranking: {
+      label: '칭찬 랭킹',
+      content: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+        className: "wcard-head"
+      }, /*#__PURE__*/React.createElement("h2", {
+        className: "wcard-title"
+      }, "\uCE6D\uCC2C \uB7AD\uD0B9"), /*#__PURE__*/React.createElement("span", {
+        className: "wcard-meta"
+      }, "\uC0C1\uC704 5\uBA85")), /*#__PURE__*/React.createElement("div", {
+        className: "wcard-body"
+      }, topStudents.length === 0 ? /*#__PURE__*/React.createElement("div", {
+        className: "wcard-empty"
+      }, "\uD559\uC0DD \uAD00\uB9AC\uC5D0\uC11C \uD559\uC0DD\uC744 \uB4F1\uB85D\uD558\uBA74 \uC21C\uC704\uAC00 \uBCF4\uC5EC\uC694.") : /*#__PURE__*/React.createElement("ol", {
+        className: "rank-list"
+      }, topStudents.map((s, idx) => /*#__PURE__*/React.createElement("li", {
+        key: s.id,
+        className: idx === 0 ? 'is-first' : ''
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "rank-no num"
+      }, idx + 1), /*#__PURE__*/React.createElement("span", {
+        className: "rank-name"
+      }, s.name), /*#__PURE__*/React.createElement("span", {
+        className: "rank-score num"
+      }, s.points || 0), /*#__PURE__*/React.createElement("span", {
+        className: "rank-bar"
+      }, /*#__PURE__*/React.createElement("span", {
+        style: {
+          width: `${Math.round((s.points || 0) / topScore * 100)}%`
+        }
+      })))))))
+    },
+    notices: {
+      label: '공지사항',
+      content: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+        className: "wcard-head"
+      }, /*#__PURE__*/React.createElement("h2", {
+        className: "wcard-title"
+      }, "\uACF5\uC9C0\uC0AC\uD56D"), isAdmin && /*#__PURE__*/React.createElement("button", {
+        type: "button",
+        className: "btn btn-primary btn-sm",
+        onClick: () => setShowNoticeForm(true)
+      }, /*#__PURE__*/React.createElement(Icon, {
+        name: "plus",
+        size: 16
+      }), "\uC0C8 \uACF5\uC9C0")), /*#__PURE__*/React.createElement("div", {
+        className: "wcard-body"
+      }, announcements.length === 0 ? /*#__PURE__*/React.createElement("div", {
+        className: "wcard-empty"
+      }, "\uB4F1\uB85D\uB41C \uACF5\uC9C0\uC0AC\uD56D\uC774 \uC5C6\uC5B4\uC694.") : /*#__PURE__*/React.createElement("div", {
+        className: "notice-grid"
+      }, announcements.map(n => /*#__PURE__*/React.createElement("article", {
+        key: n.id,
+        className: `notice-card is-${n.type || 'general'}`
+      }, /*#__PURE__*/React.createElement("div", {
+        className: "notice-card-top"
+      }, /*#__PURE__*/React.createElement("span", {
+        className: `notice-tag is-${n.type || 'general'}`
+      }, noticeTypeLabel[n.type] || '일반'), /*#__PURE__*/React.createElement("span", {
+        className: "notice-date num"
+      }, (n.date || '').slice(5).replace('-', '.')), isAdmin && /*#__PURE__*/React.createElement("span", {
+        className: "notice-actions"
+      }, /*#__PURE__*/React.createElement("button", {
+        type: "button",
+        className: "icon-ghost",
+        "aria-label": `${n.title} 수정`,
+        onClick: () => handleEditNotice(n)
+      }, /*#__PURE__*/React.createElement(Icon, {
+        name: "edit",
+        size: 16
+      })), /*#__PURE__*/React.createElement("button", {
+        type: "button",
+        className: "icon-ghost",
+        "aria-label": `${n.title} 삭제`,
+        onClick: () => handleDeleteNotice(n.id)
+      }, /*#__PURE__*/React.createElement(Icon, {
+        name: "trash",
+        size: 16
+      })))), /*#__PURE__*/React.createElement("h3", {
+        className: "notice-card-title"
+      }, n.title), n.content && /*#__PURE__*/React.createElement("p", {
+        className: "notice-card-body"
+      }, n.content))))))
+    }
+  };
   return /*#__PURE__*/React.createElement("div", {
-    className: "dashboard-page"
-  }, holiday?.isHoliday && /*#__PURE__*/React.createElement("div", {
-    className: "birthday-card"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "birthday-emoji"
-  }, "\uD83C\uDFD6\uFE0F"), /*#__PURE__*/React.createElement("div", {
-    className: "birthday-text"
+    className: "dash"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "birthday-name"
-  }, "\uC624\uB298\uC740 \uD559\uC0AC\uC77C\uC815\uC0C1 \uD734\uC5C5\uC77C\uC785\uB2C8\uB2E4: ", holiday.name), /*#__PURE__*/React.createElement("div", {
-    className: "birthday-sub"
-  }, "\uCD9C\uC11D \uCCB4\uD06C\uAC00 \uD544\uC694 \uC5C6\uB294 \uB0A0\uC77C \uC218 \uC788\uC5B4\uC694."))), birthdayStudents.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "birthday-card"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "birthday-emoji"
-  }, "\uD83C\uDF82"), /*#__PURE__*/React.createElement("div", {
-    className: "birthday-text"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "birthday-name"
-  }, "\uD83C\uDF89 \uC624\uB298\uC740 ", birthdayStudents.map(s => s.name).join(', '), " \uD559\uC0DD\uC758 \uC0DD\uC77C\uC785\uB2C8\uB2E4!"), /*#__PURE__*/React.createElement("div", {
-    className: "birthday-sub"
-  }, "\uCD95\uD558\uD574 \uC8FC\uC138\uC694! \uD83C\uDF88"))), /*#__PURE__*/React.createElement("div", {
-    className: "dashboard-fixed-grid"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card dashboard-widget"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-header"
-  }, /*#__PURE__*/React.createElement("h3", {
-    className: "card-title"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "emoji"
-  }, "\uD83D\uDCDA"), " \uC624\uB298\uC758 \uC2DC\uAC04\uD45C (", dayName, "\uC694\uC77C)")), /*#__PURE__*/React.createElement("div", {
-    className: "widget-content"
-  }, todaySchedule.length > 0 ? /*#__PURE__*/React.createElement("div", {
-    className: "schedule-list"
-  }, todaySchedule.map(item => /*#__PURE__*/React.createElement("div", {
-    key: item.period,
-    className: `schedule-item ${currentPeriod === item.period ? 'current' : ''}`
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "schedule-period"
-  }, item.period), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "schedule-subject"
-  }, item.subject), /*#__PURE__*/React.createElement("div", {
-    className: "schedule-time"
-  }, item.time), item.content && /*#__PURE__*/React.createElement("div", {
-    className: "schedule-content",
-    style: {
-      fontSize: '0.75rem',
-      color: 'var(--text-secondary)',
-      marginTop: '2px'
-    }
-  }, item.content)), currentPeriod === item.period && /*#__PURE__*/React.createElement("span", {
-    className: "badge badge-primary",
-    style: {
-      marginLeft: 'auto'
-    }
-  }, "\uC218\uC5C5 \uC911")))) : /*#__PURE__*/React.createElement("div", {
-    className: "empty-state"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "empty-icon"
-  }, "\uD83C\uDFD6\uFE0F"), /*#__PURE__*/React.createElement("p", null, "\uC624\uB298\uC740 \uC218\uC5C5\uC774 \uC5C6\uC2B5\uB2C8\uB2E4"), /*#__PURE__*/React.createElement("p", {
-    style: {
-      fontSize: '0.75rem',
-      color: 'var(--text-secondary)'
-    }
-  }, "\uC8FC\uAC04 \uC77C\uC815\uC5D0\uC11C \uC2DC\uAC04\uD45C\uB97C \uC785\uB825\uD574\uC8FC\uC138\uC694")))), /*#__PURE__*/React.createElement("div", {
-    className: "card dashboard-widget"
-  }, /*#__PURE__*/React.createElement(Thermometer, {
-    current: totalPoints,
-    goal: goalPoints,
-    reward: thermometerReward,
-    isAdmin: isAdmin,
-    onUpdate: handleUpdateThermometer
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "card dashboard-widget"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-header"
-  }, /*#__PURE__*/React.createElement("h3", {
-    className: "card-title"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "emoji"
-  }, "\uD83C\uDF71"), " \uC624\uB298\uC758 \uAE09\uC2DD"), /*#__PURE__*/React.createElement("span", {
-    className: "badge badge-primary"
-  }, "\uD558\uB0A8\uC911\uC559\uCD08")), /*#__PURE__*/React.createElement("div", {
-    className: "widget-content lunch-content"
-  }, isLoadingLunch ? /*#__PURE__*/React.createElement("div", {
-    className: "empty-state",
-    style: {
-      padding: '1rem'
-    }
-  }, /*#__PURE__*/React.createElement("p", null, "\uC2DD\uB2E8\uD45C \uBD88\uB7EC\uC624\uB294 \uC911...")) : lunchInfo ? /*#__PURE__*/React.createElement("div", {
-    className: "lunch-menu-box pretty-lunch-box"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "lunch-menu-text"
-  }, lunchInfo.menu), lunchInfo.calories && /*#__PURE__*/React.createElement("div", {
-    className: "lunch-calories"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "cal-icon"
-  }, "\u26A1"), /*#__PURE__*/React.createElement("span", null, lunchInfo.calories))) : /*#__PURE__*/React.createElement("div", {
-    className: "empty-state",
-    style: {
-      padding: '1rem'
-    }
-  }, /*#__PURE__*/React.createElement("p", null, "\uC624\uB298\uC758 \uAE09\uC2DD \uC815\uBCF4\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4.")))), /*#__PURE__*/React.createElement("div", {
-    className: "card dashboard-widget"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-header"
-  }, /*#__PURE__*/React.createElement("h3", {
-    className: "card-title"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "emoji"
-  }, "\uD83D\uDCC5"), " D-Day"), isAdmin && /*#__PURE__*/React.createElement("button", {
-    className: "icon-btn",
-    onClick: () => setShowDdayForm(!showDdayForm)
-  }, showDdayForm ? '❌' : '➕')), /*#__PURE__*/React.createElement("div", {
-    className: "widget-content"
-  }, showDdayForm && isAdmin && /*#__PURE__*/React.createElement("div", {
-    className: "dday-form",
-    style: {
-      padding: '1rem',
-      background: 'var(--gray-50)',
-      borderRadius: 'var(--radius-md)',
-      marginBottom: '1rem',
-      display: 'flex',
-      gap: '0.5rem',
-      flexWrap: 'wrap'
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    type: "text",
-    placeholder: "\uC774\uBAA8\uC9C0",
-    value: newDday.emoji,
-    onChange: e => setNewDday({
-      ...newDday,
-      emoji: e.target.value
-    }),
-    className: "form-input",
-    style: {
-      width: '60px'
-    }
-  }), /*#__PURE__*/React.createElement("input", {
-    type: "text",
-    placeholder: "\uB0B4\uC6A9",
-    value: newDday.name,
-    onChange: e => setNewDday({
-      ...newDday,
-      name: e.target.value
-    }),
-    className: "form-input",
-    style: {
-      flex: 1
-    }
-  }), /*#__PURE__*/React.createElement("input", {
-    type: "date",
-    value: newDday.date,
-    onChange: e => setNewDday({
-      ...newDday,
-      date: e.target.value
-    }),
-    className: "form-input"
-  }), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-primary",
-    onClick: handleAddDday
-  }, "\uCD94\uAC00")), /*#__PURE__*/React.createElement("div", {
-    className: "dday-list"
-  }, ddaySorted.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    className: "empty-state"
-  }, /*#__PURE__*/React.createElement("p", null, "\uB4F1\uB85D\uB41C D-Day\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4.")) : ddaySorted.map((ev, i) => {
-    const dday = getDday(ev.date);
-    const isUrgent = parseInt(dday.replace('D-', '')) <= 7;
-    return /*#__PURE__*/React.createElement("div", {
-      key: ev.id || i,
-      className: "dday-item"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "dday-info"
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "dday-emoji"
-    }, ev.emoji), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-      className: "dday-name"
-    }, ev.name), /*#__PURE__*/React.createElement("div", {
-      className: "dday-date"
-    }, ev.date.slice(5).replace('-', '/')))), /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '0.5rem'
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      className: `dday-badge ${isUrgent ? 'urgent' : ''}`
-    }, dday), isAdmin && /*#__PURE__*/React.createElement("button", {
-      className: "icon-btn delete-btn",
-      style: {
-        fontSize: '0.75rem',
-        padding: '2px 4px'
-      },
-      onClick: () => handleDeleteDday(ev.id)
-    }, "\uD83D\uDDD1\uFE0F")));
-  })))), /*#__PURE__*/React.createElement("div", {
-    className: "card dashboard-widget"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-header"
-  }, /*#__PURE__*/React.createElement("h3", {
-    className: "card-title"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "emoji"
-  }, "\uD83C\uDFC6"), " \uCE6D\uCC2C \uB7AD\uD0B9 (Top 5)")), /*#__PURE__*/React.createElement("div", {
-    className: "widget-content ranking-list"
-  }, topStudents.map((student, idx) => /*#__PURE__*/React.createElement("div", {
-    key: student.id,
-    className: "ranking-item"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "ranking-rank"
-  }, idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `${idx + 1}`), /*#__PURE__*/React.createElement("div", {
-    className: "ranking-name"
-  }, student.name), /*#__PURE__*/React.createElement("div", {
-    className: "ranking-score"
-  }, student.points || 0, "\uC810"))))), /*#__PURE__*/React.createElement("div", {
-    className: "card dashboard-widget notice-card-container"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-header"
-  }, /*#__PURE__*/React.createElement("h3", {
-    className: "card-title"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "emoji"
-  }, "\uD83D\uDCE2"), " \uACF5\uC9C0\uC0AC\uD56D"), isAdmin && /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-sm btn-primary new-notice-btn",
-    onClick: () => setShowNoticeForm(!showNoticeForm)
-  }, "+ \uC0C8 \uACF5\uC9C0")), /*#__PURE__*/React.createElement("div", {
-    className: "widget-content notice-list"
-  }, isAdmin && showNoticeForm && /*#__PURE__*/React.createElement("div", {
+    className: "dash-top"
+  }, /*#__PURE__*/React.createElement("h1", {
+    className: "dash-headline"
+  }, headline), isAdmin && /*#__PURE__*/React.createElement("div", {
+    className: "dash-tools"
+  }, editingLayout && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-secondary btn-sm",
+    onClick: resetLayout
+  }, "\uAE30\uBCF8 \uBC30\uCE58\uB85C"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: `btn btn-sm ${editingLayout ? 'btn-primary' : 'btn-secondary'}`,
+    "aria-pressed": editingLayout,
+    onClick: () => setEditingLayout(!editingLayout)
+  }, editingLayout ? '배치 완료' : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(Icon, {
+    name: "move",
+    size: 16
+  }), "\uBC30\uCE58 \uD3B8\uC9D1")))), editingLayout && /*#__PURE__*/React.createElement("p", {
+    className: "dash-edit-hint"
+  }, "\uC704\uC82F \uC624\uB978\uCABD \uC704 ", /*#__PURE__*/React.createElement("strong", null, "\uC62E\uAE30\uAE30"), "\uB97C \uB04C\uC5B4 \uC790\uB9AC\uB97C \uBC14\uAFB8\uACE0, \uC624\uB978\uCABD \uC544\uB798 \uBAA8\uC11C\uB9AC\uB97C \uB04C\uC5B4 \uD06C\uAE30\uB97C \uC870\uC808\uD558\uC138\uC694. \uBC14\uAFBC \uBC30\uCE58\uB294 \uBC14\uB85C \uC800\uC7A5\uB3FC\uC694."), birthdayStudents.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "dash-banner"
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "cake",
+    size: 22
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "dash-banner-main"
+  }, "\uC624\uB298\uC740 ", /*#__PURE__*/React.createElement("strong", null, birthdayStudents.map(s => s.name).join(', ')), " \uD559\uC0DD\uC758 \uC0DD\uC77C\uC774\uC5D0\uC694"), /*#__PURE__*/React.createElement("span", {
+    className: "dash-banner-sub"
+  }, "\uB2E4 \uAC19\uC774 \uCD95\uD558\uD574 \uC8FC\uC138\uC694")), holiday?.isHoliday && /*#__PURE__*/React.createElement("div", {
+    className: "dash-banner"
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "sun",
+    size: 22
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "dash-banner-main"
+  }, "\uD559\uC0AC\uC77C\uC815\uC0C1 \uD734\uC5C5\uC77C: ", /*#__PURE__*/React.createElement("strong", null, holiday.name)), /*#__PURE__*/React.createElement("span", {
+    className: "dash-banner-sub"
+  }, "\uCD9C\uC11D \uCCB4\uD06C\uAC00 \uD544\uC694 \uC5C6\uB294 \uB0A0\uC77C \uC218 \uC788\uC5B4\uC694")), /*#__PURE__*/React.createElement(DashboardGrid, {
+    layout: layout,
+    editing: editingLayout,
+    onChange: saveLayout,
+    widgets: widgets
+  }), isAdmin && showNoticeForm && /*#__PURE__*/React.createElement("div", {
     className: "notice-modal-overlay",
-    onClick: () => {
-      setShowNoticeForm(false);
-      setEditNoticeId(null);
-      setNewNotice({
-        title: '',
-        content: '',
-        type: 'general'
-      });
-    }
+    onClick: closeNoticeForm
   }, /*#__PURE__*/React.createElement("div", {
     className: "notice-modal-content",
     onClick: e => e.stopPropagation()
   }, /*#__PURE__*/React.createElement("div", {
     className: "notice-modal-header"
-  }, /*#__PURE__*/React.createElement("h3", null, editNoticeId ? '✏️ 공지사항 수정' : '📢 새 공지사항'), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("h3", null, editNoticeId ? '공지사항 수정' : '새 공지사항'), /*#__PURE__*/React.createElement("button", {
+    type: "button",
     className: "notice-close-btn",
-    onClick: () => {
-      setShowNoticeForm(false);
-      setEditNoticeId(null);
-      setNewNotice({
-        title: '',
-        content: '',
-        type: 'general'
-      });
-    }
+    "aria-label": "\uB2EB\uAE30",
+    onClick: closeNoticeForm
   }, "\xD7")), /*#__PURE__*/React.createElement("div", {
     className: "notice-modal-body"
   }, /*#__PURE__*/React.createElement("input", {
     className: "form-input",
+    "aria-label": "\uC81C\uBAA9",
     placeholder: "\uC81C\uBAA9\uC744 \uC785\uB825\uD558\uC138\uC694",
     value: newNotice.title,
     onChange: e => setNewNotice({
@@ -1753,6 +2169,7 @@ function DashboardPage() {
     })
   }), /*#__PURE__*/React.createElement("textarea", {
     className: "form-input",
+    "aria-label": "\uB0B4\uC6A9",
     placeholder: "\uB0B4\uC6A9\uC744 \uC785\uB825\uD558\uC138\uC694",
     value: newNotice.content,
     onChange: e => setNewNotice({
@@ -1765,6 +2182,7 @@ function DashboardPage() {
     }
   }), /*#__PURE__*/React.createElement("select", {
     className: "form-input",
+    "aria-label": "\uC885\uB958",
     value: newNotice.type,
     onChange: e => setNewNotice({
       ...newNotice,
@@ -1779,87 +2197,14 @@ function DashboardPage() {
   }, "\uD1B5\uC2E0\uBB38"))), /*#__PURE__*/React.createElement("div", {
     className: "notice-modal-footer"
   }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
     className: "btn btn-secondary",
-    onClick: () => {
-      setShowNoticeForm(false);
-      setEditNoticeId(null);
-      setNewNotice({
-        title: '',
-        content: '',
-        type: 'general'
-      });
-    }
+    onClick: closeNoticeForm
   }, "\uCDE8\uC18C"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
     className: "btn btn-primary",
     onClick: handleAddNotice
-  }, editNoticeId ? '수정' : '등록')))), /*#__PURE__*/React.createElement("div", {
-    className: "notices-list"
-  }, announcements.length > 0 ? announcements.map(n => /*#__PURE__*/React.createElement("div", {
-    key: n.id,
-    className: "notice-item",
-    style: {
-      flexDirection: 'column',
-      alignItems: 'flex-start',
-      padding: '1rem',
-      border: '1px solid var(--border-light)',
-      borderRadius: 'var(--radius-md)',
-      marginBottom: '0.75rem',
-      background: 'white'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      width: '100%',
-      justifyContent: 'space-between',
-      marginBottom: '0.5rem'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '0.5rem'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    className: `notice-type ${n.type}`
-  }, n.type === 'important' ? '중요' : n.type === 'newsletter' ? '통신문' : '일반'), /*#__PURE__*/React.createElement("span", {
-    className: "notice-meta"
-  }, n.date)), isAdmin && /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: '4px'
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "icon-btn",
-    onClick: () => handleEditNotice(n),
-    style: {
-      fontSize: '0.75rem',
-      padding: '2px 4px'
-    }
-  }, "\u270F\uFE0F"), /*#__PURE__*/React.createElement("button", {
-    className: "icon-btn delete-btn",
-    onClick: () => handleDeleteNotice(n.id),
-    style: {
-      fontSize: '0.75rem',
-      padding: '2px 4px'
-    }
-  }, "\uD83D\uDDD1\uFE0F"))), /*#__PURE__*/React.createElement("div", {
-    className: "notice-title",
-    style: {
-      fontSize: '1.1rem',
-      fontWeight: '700',
-      marginBottom: '0.5rem'
-    }
-  }, n.title), /*#__PURE__*/React.createElement("div", {
-    className: "notice-content",
-    style: {
-      fontSize: '0.9rem',
-      color: 'var(--text-secondary)',
-      lineHeight: '1.5',
-      whiteSpace: 'pre-wrap'
-    }
-  }, n.content))) : /*#__PURE__*/React.createElement("div", {
-    className: "empty-state"
-  }, /*#__PURE__*/React.createElement("p", null, "\uB4F1\uB85D\uB41C \uACF5\uC9C0\uC0AC\uD56D\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.")))))));
+  }, editNoticeId ? '수정' : '등록')))));
 }
 
 /* ===================================================================
