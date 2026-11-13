@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>학급 대시보드 | 붕쌤 (로컬 버전)</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏫</text></svg>" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="root">
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:sans-serif;color:#999;">불러오는 중...</div>
+  </div>
+
+  <script>
+    // 뭔가 잘못되면 흰 화면/무한 로딩 대신 안내 문구를 보여줌
+    window.addEventListener('error', function () {
+      var root = document.getElementById('root');
+      if (root && root.textContent.indexOf('불러오는 중') !== -1) {
+        root.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:1rem;font-family:sans-serif;color:#c00;padding:2rem;text-align:center;">' +
+          '<div>문제가 발생해 불러오지 못했습니다.</div>' +
+          '<div style="font-size:0.85rem;color:#888;">인터넷 연결을 확인하고 새로고침해 주세요. (크롬/엣지 권장)</div></div>';
+      }
+    });
+  </script>
+
+  <!-- CDN 라이브러리 (최초 1회만 인터넷 필요, 이후 브라우저 캐시로 재사용될 수 있음) -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <!-- 같은 폴더의 로컬 js 파일 (app.js는 app.jsx를 미리 컴파일해둔 일반 js) -->
+  <script src="local.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

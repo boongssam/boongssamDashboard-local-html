@@ -1,0 +1,1815 @@
+const { useState, useEffect, useRef, useCallback, useReducer, useContext, useMemo, createContext } = React;
+const {
+  getDayName, formatDate, getDday, isTodayBirthday, getAvatarColor, getInitials,
+  getCurrentPeriod, shuffleArray, generateUUID, getWeekStart, toISODate,
+} = window.Helpers;
+const { fetchTodayLunch, fetchSchoolHoliday } = window.NeisApi;
+const { generateBehaviorSummary } = window.GeminiApi;
+const { downloadStudentTemplate, parseStudentExcel } = window.ExcelApi;
+const { pickFolder, getActiveFolder, reconnectFolder, readDb, writeDb } = window.LocalStore;
+
+/* ===================================================================
+   AppContext (서버 대신 로컬 폴더에 읽고 쓰는 버전)
+   =================================================================== */
+const AppContext = createContext(null);
+
+const initialState = {
+  students: [],
+  attendance: {},
+  selectedAttendanceDate: toISODate(new Date()),
+  monthlyAttendance: {},
+  announcements: [],
+  assignments: [],
+  newsletters: [],
+  polls: [],
+  toasts: [],
+  weeklyPlans: {},
+  quickLinks: [],
+  isAdmin: false,
+  settings: { ...window.LocalStore.DEFAULT_DB.settings },
+  ddays: [],
+  studentRecords: {},
+};
+
+function reducer(state, action) {
+  switch (action.type) {
+    case 'SET_STUDENTS': return { ...state, students: action.payload };
+    case 'SET_ANNOUNCEMENTS': return { ...state, announcements: action.payload };
+    case 'SET_ASSIGNMENTS': return { ...state, assignments: action.payload };
+    case 'SET_ATTENDANCE_MAP': return { ...state, attendance: action.payload };
+    case 'SET_SELECTED_ATTENDANCE_DATE': return { ...state, selectedAttendanceDate: action.payload };
+    case 'SET_MONTHLY_ATTENDANCE': {
+      const newMonthly = { ...state.monthlyAttendance };
+      for (const [date, records] of Object.entries(action.payload)) {
+        newMonthly[date] = { ...newMonthly[date], ...records };
+      }
+      return { ...state, monthlyAttendance: newMonthly };
+    }
+    case 'UPDATE_MONTHLY_ATTENDANCE': {
+      const { date, studentId, status, id } = action.payload;
+      const dateRecords = state.monthlyAttendance[date] || {};
+      return {
+        ...state,
+        monthlyAttendance: {
+          ...state.monthlyAttendance,
+          [date]: { ...dateRecords, [studentId]: { status, note: dateRecords[studentId]?.note || '', id: id || dateRecords[studentId]?.id } },
+        },
+      };
+    }
+    case 'SET_ATTENDANCE':
+      return {
+        ...state,
+        attendance: {
+          ...state.attendance,
+          [action.payload.studentId]: { status: action.payload.status, note: action.payload.note || '', id: action.payload.id || state.attendance[action.payload.studentId]?.id },
+        },
+      };
+    case 'UPDATE_POINTS':
+      return { ...state, students: state.students.map(s => s.id === action.payload.studentId ? { ...s, points: Math.max(0, s.points + action.payload.amount) } : s) };
+    case 'RESET_POINTS':
+      return { ...state, students: state.students.map(s => s.id === action.payload.studentId ? { ...s, points: 0 } : s) };
+    case 'ADD_ANNOUNCEMENT': return { ...state, announcements: [action.payload, ...state.announcements] };
+    case 'UPDATE_ANNOUNCEMENT': return { ...state, announcements: state.announcements.map(a => a.id === action.payload.id ? action.payload : a) };
+    case 'DELETE_ANNOUNCEMENT': return { ...state, announcements: state.announcements.filter(a => a.id !== action.payload) };
+    case 'ADD_ASSIGNMENT': return { ...state, assignments: [...state.assignments, action.payload] };
+    case 'DELETE_ASSIGNMENT': return { ...state, assignments: state.assignments.filter(a => a.id !== action.payload) };
+    case 'UPDATE_ASSIGNMENT_SUBMISSIONS':
+      return { ...state, assignments: state.assignments.map(a => a.id === action.payload.id ? { ...a, submissions: { ...a.submissions, ...action.payload.submissions } } : a) };
+    case 'EVALUATE_ASSIGNMENT':
+      return {
+        ...state,
+        assignments: state.assignments.map(a => {
+          if (a.id === action.payload.id) {
+            const currentSub = a.submissions?.[action.payload.studentId] || {};
+            return { ...a, submissions: { ...a.submissions, [action.payload.studentId]: { ...currentSub, grade: action.payload.grade } } };
+          }
+          return a;
+        }),
+      };
+    case 'ADD_DDAY': return { ...state, ddays: [...state.ddays, action.payload] };
+    case 'DELETE_DDAY': return { ...state, ddays: state.ddays.filter(d => d.id !== action.payload) };
+    case 'SET_DDAYS': return { ...state, ddays: action.payload };
+    case 'ADD_POLL': return { ...state, polls: [...state.polls, action.payload] };
+    case 'DELETE_POLL': return { ...state, polls: state.polls.filter(p => p.id !== action.payload) };
+    case 'SET_POLLS': return { ...state, polls: action.payload };
+    case 'VOTE_POLL': return { ...state, polls: state.polls.map(p => p.id === action.payload.pollId ? { ...p, votes: action.payload.newVotes } : p) };
+    case 'ADD_TOAST': return { ...state, toasts: [...state.toasts, action.payload] };
+    case 'REMOVE_TOAST': return { ...state, toasts: state.toasts.filter(t => t.id !== action.payload) };
+    case 'ADD_STUDENT': return { ...state, students: [...state.students, action.payload] };
+    case 'UPDATE_STUDENT': return { ...state, students: state.students.map(s => s.id === action.payload.id ? { ...s, ...action.payload } : s) };
+    case 'BULK_UPDATE_STUDENTS':
+      return { ...state, students: state.students.map(s => { const u = action.payload.find(x => x.id === s.id); return u ? { ...s, ...u } : s; }) };
+    case 'SET_NEWSLETTERS': return { ...state, newsletters: action.payload };
+    case 'COLLECT_NEWSLETTER': return { ...state, newsletters: state.newsletters.map(n => n.id === action.payload.id ? { ...n, collected: action.payload.collected } : n) };
+    case 'TOGGLE_ADMIN': return { ...state, isAdmin: action.payload };
+    case 'UPDATE_SETTINGS': return { ...state, settings: { ...state.settings, ...action.payload } };
+    case 'SET_WEEKLY_PLAN': {
+      const { weekKey, day, period, subject, content } = action.payload;
+      const existingWeek = state.weeklyPlans[weekKey] || {};
+      return { ...state, weeklyPlans: { ...state.weeklyPlans, [weekKey]: { ...existingWeek, [day]: { ...(existingWeek[day] || {}), [period]: { subject, content } } } } };
+    }
+    case 'SET_WEEKLY_PLANS_BULK': return { ...state, weeklyPlans: action.payload };
+    case 'SET_QUICK_LINKS': return { ...state, quickLinks: action.payload };
+    case 'ADD_LINK': return { ...state, quickLinks: [...state.quickLinks, action.payload] };
+    case 'UPDATE_LINK': return { ...state, quickLinks: state.quickLinks.map(l => l.id === action.payload.id ? action.payload : l) };
+    case 'DELETE_LINK': return { ...state, quickLinks: state.quickLinks.filter(l => l.id !== action.payload) };
+    case 'SET_STUDENT_RECORDS': return { ...state, studentRecords: action.payload };
+    case 'ADD_STUDENT_RECORD': {
+      const { studentId, record } = action.payload;
+      const existing = state.studentRecords[studentId] || [];
+      return { ...state, studentRecords: { ...state.studentRecords, [studentId]: [...existing, record] } };
+    }
+    case 'DELETE_STUDENT_RECORD': {
+      const { studentId, recordId } = action.payload;
+      const existing = state.studentRecords[studentId] || [];
+      return { ...state, studentRecords: { ...state.studentRecords, [studentId]: existing.filter(r => r.id !== recordId) } };
+    }
+    default: return state;
+  }
+}
+
+function AppProvider({ children }) {
+  const [state, dispatch] = useReducer(reducer, initialState);
+  const [isDbLoading, setIsDbLoading] = useState(true);
+  const [folder, setFolder] = useState(null);
+  const [folderStatus, setFolderStatus] = useState('loading'); // loading | none | needs-reconnect | connected
+  const saveTimer = useRef(null);
+
+  const showToast = useCallback((message, type = 'info') => {
+    const id = Date.now() + Math.random();
+    dispatch({ type: 'ADD_TOAST', payload: { id, message, type } });
+    setTimeout(() => dispatch({ type: 'REMOVE_TOAST', payload: id }), 3000);
+  }, []);
+
+  const loadFromFolder = useCallback(async (handle) => {
+    const db = await readDb(handle);
+    dispatch({ type: 'SET_STUDENTS', payload: db.students || [] });
+    dispatch({ type: 'SET_ANNOUNCEMENTS', payload: db.announcements || [] });
+    dispatch({ type: 'SET_ASSIGNMENTS', payload: db.assignments || [] });
+    dispatch({ type: 'SET_DDAYS', payload: db.ddays || [] });
+    dispatch({ type: 'SET_QUICK_LINKS', payload: db.quickLinks || [] });
+    dispatch({ type: 'SET_POLLS', payload: db.polls || [] });
+    dispatch({ type: 'SET_NEWSLETTERS', payload: db.newsletters || [] });
+    dispatch({ type: 'SET_WEEKLY_PLANS_BULK', payload: db.weeklyPlans || {} });
+    dispatch({ type: 'SET_STUDENT_RECORDS', payload: db.studentRecords || {} });
+
+    const attendanceByDate = db.attendance || {};
+    dispatch({ type: 'SET_MONTHLY_ATTENDANCE', payload: attendanceByDate });
+    const today = toISODate(new Date());
+    const attMap = {};
+    (db.students || []).forEach(s => { attMap[s.id] = { status: 'present', note: '' }; });
+    Object.assign(attMap, attendanceByDate[today] || {});
+    dispatch({ type: 'SET_ATTENDANCE_MAP', payload: attMap });
+
+    dispatch({ type: 'UPDATE_SETTINGS', payload: db.settings || {} });
+    setIsDbLoading(false);
+  }, []);
+
+  // 최초 마운트: 저장해둔 폴더가 있는지 확인
+  useEffect(() => {
+    (async () => {
+      try {
+        const result = await getActiveFolder();
+        if (!result) { setFolderStatus('none'); setIsDbLoading(false); return; }
+        if (result.needsReconnect) { setFolder(result.handle); setFolderStatus('needs-reconnect'); setIsDbLoading(false); return; }
+        setFolder(result);
+        setFolderStatus('connected');
+        await loadFromFolder(result);
+      } catch (e) {
+        console.error('폴더 연결 확인 중 오류:', e);
+        setFolderStatus('none');
+        setIsDbLoading(false);
+      }
+    })();
+
+    if (localStorage.getItem('isAdmin') === 'true') dispatch({ type: 'TOGGLE_ADMIN', payload: true });
+  }, [loadFromFolder]);
+
+  const connectFolder = async () => {
+    try {
+      const handle = await pickFolder();
+      setFolder(handle);
+      setFolderStatus('connected');
+      setIsDbLoading(true);
+      await loadFromFolder(handle);
+    } catch (e) {
+      if (e.name !== 'AbortError') console.error('폴더 선택 오류:', e);
+    }
+  };
+
+  const reconnect = async () => {
+    const handle = await reconnectFolder(folder);
+    if (handle) { setFolderStatus('connected'); setIsDbLoading(true); await loadFromFolder(handle); }
+    else showToast('폴더 접근이 거부되었습니다.', 'error');
+  };
+
+  // 상태가 바뀔 때마다 로컬 폴더에 저장 (디바운스)
+  useEffect(() => {
+    if (isDbLoading || folderStatus !== 'connected' || !folder) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      const payload = {
+        students: state.students, attendance: state.monthlyAttendance, announcements: state.announcements,
+        assignments: state.assignments, ddays: state.ddays, polls: state.polls, newsletters: state.newsletters,
+        quickLinks: state.quickLinks, weeklyPlans: state.weeklyPlans, studentRecords: state.studentRecords,
+        settings: state.settings,
+      };
+      writeDb(folder, payload).catch(err => console.error('로컬 저장 오류:', err));
+    }, 500);
+    return () => clearTimeout(saveTimer.current);
+  }, [state, isDbLoading, folderStatus, folder]);
+
+  const saveWeeklyPlan = useCallback((weekKey, day, period, subject, content) => {
+    dispatch({ type: 'SET_WEEKLY_PLAN', payload: { weekKey, day, period, subject, content } });
+  }, []);
+
+  const addDDay = (dday) => dispatch({ type: 'ADD_DDAY', payload: { id: generateUUID(), name: dday.name, date: dday.date, emoji: dday.emoji } });
+  const deleteDDayFunc = (id) => dispatch({ type: 'DELETE_DDAY', payload: id });
+  const updatePointsFunc = (studentId, _cur, amount) => dispatch({ type: 'UPDATE_POINTS', payload: { studentId, amount } });
+  const resetPointsFunc = (studentId) => dispatch({ type: 'RESET_POINTS', payload: { studentId } });
+
+  const updateAttendanceFunc = (studentId, status, note = '', date = null) => {
+    const targetDate = date || toISODate(new Date());
+    dispatch({ type: 'SET_ATTENDANCE', payload: { studentId, status, note, id: '' } });
+    dispatch({ type: 'UPDATE_MONTHLY_ATTENDANCE', payload: { date: targetDate, studentId, status, id: '' } });
+  };
+
+  const loadAttendanceByDateFunc = useCallback((date) => {
+    dispatch({ type: 'SET_SELECTED_ATTENDANCE_DATE', payload: date });
+    const attMap = {};
+    state.students.forEach(s => { attMap[s.id] = { status: 'present', note: '' }; });
+    Object.assign(attMap, state.monthlyAttendance[date] || {});
+    dispatch({ type: 'SET_ATTENDANCE_MAP', payload: attMap });
+  }, [state.students, state.monthlyAttendance]);
+
+  const loadMonthlyAttendanceFunc = useCallback(() => {}, []);
+
+  const addStudentRecordFunc = (studentId, type, content, category = '') => {
+    const date = toISODate(new Date());
+    dispatch({ type: 'ADD_STUDENT_RECORD', payload: { studentId, record: { id: generateUUID(), type, content, category, date } } });
+    showToast('기록이 저장되었습니다.', 'success');
+  };
+  const deleteStudentRecordFunc = (studentId, recordId) => dispatch({ type: 'DELETE_STUDENT_RECORD', payload: { studentId, recordId } });
+  const updateStudentFunc = (studentData) => dispatch({ type: 'UPDATE_STUDENT', payload: studentData });
+  const bulkUpdateStudentsFunc = (updates) => dispatch({ type: 'BULK_UPDATE_STUDENTS', payload: updates });
+
+  const votePollFunc = (pollId, optionIndex) => {
+    const poll = state.polls.find(p => p.id === pollId);
+    if (!poll) return;
+    const newVotes = [...poll.votes];
+    newVotes[optionIndex] += 1;
+    dispatch({ type: 'VOTE_POLL', payload: { pollId, newVotes } });
+  };
+
+  const collectNewsletterFunc = (id, newCollected) => dispatch({ type: 'COLLECT_NEWSLETTER', payload: { id, collected: newCollected } });
+  const addLinkFunc = (linkData) => dispatch({ type: 'ADD_LINK', payload: linkData });
+  const updateLinkFunc = (linkData) => dispatch({ type: 'UPDATE_LINK', payload: linkData });
+  const deleteLinkFunc = (id) => dispatch({ type: 'DELETE_LINK', payload: id });
+  const addAssignmentFunc = (assignment) => dispatch({ type: 'ADD_ASSIGNMENT', payload: assignment });
+  const updateAssignmentSubmissionsFunc = (id, submissions) => dispatch({ type: 'UPDATE_ASSIGNMENT_SUBMISSIONS', payload: { id, submissions } });
+  const deleteAssignmentFunc = (id) => dispatch({ type: 'DELETE_ASSIGNMENT', payload: id });
+  const addAnnouncementFunc = (a) => dispatch({ type: 'ADD_ANNOUNCEMENT', payload: a });
+  const updateAnnouncementFunc = (a) => dispatch({ type: 'UPDATE_ANNOUNCEMENT', payload: a });
+  const deleteAnnouncementFunc = (id) => dispatch({ type: 'DELETE_ANNOUNCEMENT', payload: id });
+  const addPollFunc = (p) => dispatch({ type: 'ADD_POLL', payload: p });
+  const deletePollFunc = (id) => dispatch({ type: 'DELETE_POLL', payload: id });
+  const updateSettingsFunc = (newSettings) => dispatch({ type: 'UPDATE_SETTINGS', payload: newSettings });
+
+  const loginFunc = (password) => {
+    if (!state.settings.adminPassword) {
+      dispatch({ type: 'UPDATE_SETTINGS', payload: { adminPassword: password } });
+      localStorage.setItem('isAdmin', 'true');
+      dispatch({ type: 'TOGGLE_ADMIN', payload: true });
+      showToast('선생님 비밀번호가 설정되고, 교사 모드로 전환되었습니다.', 'success');
+      return true;
+    }
+    if (password === state.settings.adminPassword) {
+      localStorage.setItem('isAdmin', 'true');
+      dispatch({ type: 'TOGGLE_ADMIN', payload: true });
+      showToast('교사 모드로 전환되었습니다.', 'success');
+      return true;
+    }
+    showToast('비밀번호가 틀렸습니다.', 'error');
+    return false;
+  };
+  const logoutFunc = () => {
+    localStorage.removeItem('isAdmin');
+    dispatch({ type: 'TOGGLE_ADMIN', payload: false });
+    showToast('학생 모드로 전환되었습니다.', 'info');
+  };
+
+  const value = {
+    state, dispatch, showToast,
+    updatePoints: updatePointsFunc, resetPoints: resetPointsFunc,
+    updateAttendance: updateAttendanceFunc, loadAttendanceByDate: loadAttendanceByDateFunc, loadMonthlyAttendance: loadMonthlyAttendanceFunc,
+    updateStudent: updateStudentFunc, bulkUpdateStudents: bulkUpdateStudentsFunc, addStudentRecord: addStudentRecordFunc, deleteStudentRecord: deleteStudentRecordFunc,
+    saveWeeklyPlan, updateSettings: updateSettingsFunc, addDDay, deleteDDay: deleteDDayFunc,
+    votePoll: votePollFunc, collectNewsletter: collectNewsletterFunc,
+    addLink: addLinkFunc, updateLink: updateLinkFunc, deleteLink: deleteLinkFunc,
+    addAssignment: addAssignmentFunc, updateAssignmentSubmissions: updateAssignmentSubmissionsFunc, deleteAssignment: deleteAssignmentFunc,
+    addAnnouncement: addAnnouncementFunc, updateAnnouncement: updateAnnouncementFunc, deleteAnnouncement: deleteAnnouncementFunc,
+    addPoll: addPollFunc, deletePoll: deletePollFunc,
+    login: loginFunc, logout: logoutFunc,
+    isDbLoading, getWeekStart, toISODate,
+  };
+
+  if (folderStatus === 'loading') {
+    return <div className="folder-gate"><p>불러오는 중...</p></div>;
+  }
+  if (folderStatus !== 'connected') {
+    return <FolderGate status={folderStatus} onConnect={connectFolder} onReconnect={reconnect} />;
+  }
+
+  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+}
+
+function useApp() {
+  const ctx = useContext(AppContext);
+  if (!ctx) throw new Error('useApp must be used within AppProvider');
+  return ctx;
+}
+
+function FolderGate({ status, onConnect, onReconnect }) {
+  return (
+    <div className="folder-gate">
+      <div className="folder-gate-card">
+        <div className="folder-gate-icon">📁</div>
+        {status === 'needs-reconnect' ? (
+          <>
+            <h2>데이터 폴더 접근이 끊겼습니다</h2>
+            <p>브라우저를 새로 시작하면 보안상 폴더 접근을 다시 허용해야 합니다.</p>
+            <button className="btn btn-primary btn-lg" onClick={onReconnect}>폴더 다시 연결하기</button>
+          </>
+        ) : (
+          <>
+            <h2>학급 데이터를 저장할 폴더를 선택해주세요</h2>
+            <p>선택한 폴더 안에 db.json 파일로 모든 데이터가 저장됩니다. 한 번만 선택하면 됩니다.</p>
+            <button className="btn btn-primary btn-lg" onClick={onConnect}>폴더 선택하기</button>
+            <p className="folder-gate-note">⚠️ 크롬 또는 엣지 브라우저에서만 지원됩니다.</p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ===================================================================
+   라우팅 (해시 기반)
+   =================================================================== */
+function useHashRoute() {
+  const [hash, setHash] = useState(window.location.hash.slice(1) || '/');
+  useEffect(() => {
+    const onChange = () => setHash(window.location.hash.slice(1) || '/');
+    window.addEventListener('hashchange', onChange);
+    return () => window.removeEventListener('hashchange', onChange);
+  }, []);
+  return hash;
+}
+
+/* ===================================================================
+   Toast
+   =================================================================== */
+function Toast() {
+  const { state } = useApp();
+  return (
+    <div className="toast-container">
+      {state.toasts.map(t => (
+        <div key={t.id} className={`toast ${t.type}`}>
+          <span>{t.type === 'success' ? '✅' : t.type === 'error' ? '❌' : t.type === 'warning' ? '⚠️' : 'ℹ️'}</span>
+          <span>{t.message}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ===================================================================
+   Thermometer
+   =================================================================== */
+function Thermometer({ current, goal, reward, isAdmin, onUpdate }) {
+  const percentage = Math.min((current / goal) * 100, 100);
+  const isGoalReached = current >= goal;
+  const [isEditing, setIsEditing] = useState(false);
+  const [editGoal, setEditGoal] = useState(goal);
+  const [editReward, setEditReward] = useState(reward || '');
+
+  const handleSave = () => { onUpdate && onUpdate(parseInt(editGoal) || 1500, editReward); setIsEditing(false); };
+
+  return (
+    <>
+      <div className="card-header" style={{ alignItems: 'flex-start' }}>
+        <div><h3 className="card-title"><span className="emoji">🌡️</span> 우리반 칭찬 온도계</h3></div>
+        {!isEditing ? (
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <span className="badge badge-primary">목표: {goal}점</span>
+            {isAdmin && <button className="icon-btn" onClick={() => setIsEditing(true)}>✏️</button>}
+          </div>
+        ) : null}
+      </div>
+      <div className="widget-content" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', flex: 1, paddingBottom: '1.5rem' }}>
+        {!isEditing ? (
+          <div className="thermometer-reward-text" style={{ marginBottom: '1rem', marginTop: '-0.5rem', textAlign: 'center' }}>보상: {reward || '설정된 보상이 없습니다'}</div>
+        ) : null}
+        {isEditing && isAdmin && (
+          <div className="thermometer-edit-form" style={{ marginTop: '-0.5rem', marginBottom: '1rem' }}>
+            <input type="number" value={editGoal} onChange={e => setEditGoal(e.target.value)} placeholder="목표 점수" className="form-input" style={{ width: '100px' }} />
+            <input type="text" value={editReward} onChange={e => setEditReward(e.target.value)} placeholder="보상 내용" className="form-input" style={{ flex: 1 }} />
+            <button className="btn btn-primary" onClick={handleSave}>저장</button>
+            <button className="btn btn-secondary" onClick={() => setIsEditing(false)}>취소</button>
+          </div>
+        )}
+        <div className="thermometer-content" style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+          <div className="thermometer-score-display" style={{ marginBottom: '1rem' }}>
+            <div className="current-score-huge">{current}<span className="unit">점</span></div>
+            <div className="score-percent">현재 목표의 <strong>{percentage.toFixed(1)}%</strong> 달성 중! 🚀</div>
+          </div>
+          <div className="thermometer-horizontal" style={{ marginBottom: '1.5rem' }}>
+            <div className="thermometer-track">
+              <div className={`thermometer-progress ${isGoalReached ? 'goal-reached' : ''}`} style={{ width: `${percentage}%` }}>
+                <div className="thermometer-glow"></div>
+              </div>
+              <div className="thermometer-markers-h">
+                <div className="marker-h" style={{ left: '25%' }}><span>25%</span></div>
+                <div className="marker-h" style={{ left: '50%' }}><span>절반!</span></div>
+                <div className="marker-h" style={{ left: '75%' }}><span>75%</span></div>
+                <div className="marker-h" style={{ left: '100%' }}><span>목표 달성 🏆</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        {isGoalReached && !isEditing && (
+          <div className="thermometer-celebration" style={{ marginTop: '0.5rem' }}>🎉 축하합니다! {reward ? `'${reward}'` : '학급 전체 보상'}을(를) 달성했습니다! 🎉</div>
+        )}
+      </div>
+    </>
+  );
+}
+
+/* ===================================================================
+   AdminSettingsModal (캘린더 ID + Gemini 키)
+   =================================================================== */
+function AdminSettingsModal({ onClose }) {
+  const { state, updateSettings, showToast } = useApp();
+  const { settings } = state;
+  const [calendarId1, setCalendarId1] = useState(settings.calendarId1 || '');
+  const [calendarId2, setCalendarId2] = useState(settings.calendarId2 || '');
+  const [calendarId3, setCalendarId3] = useState(settings.calendarId3 || '');
+  const [geminiApiKey, setGeminiApiKey] = useState(settings.geminiApiKey || '');
+
+  const handleSave = () => {
+    updateSettings({ ...settings, calendarId1, calendarId2, calendarId3, geminiApiKey });
+    showToast('설정이 저장되었습니다.', 'success');
+    onClose();
+  };
+
+  return (
+    <div className="settings-modal-overlay" onClick={onClose}>
+      <div className="settings-modal-content" onClick={e => e.stopPropagation()}>
+        <div className="settings-modal-header"><h3>⚙️ 관리자 설정</h3><button className="settings-close-btn" onClick={onClose}>×</button></div>
+        <div className="settings-modal-body">
+          <div className="settings-form-group">
+            <label>📅 구글 캘린더 ID 1 (필수)</label>
+            <input type="text" className="settings-form-input" placeholder="예: ...@group.calendar.google.com" value={calendarId1} onChange={e => setCalendarId1(e.target.value)} />
+          </div>
+          <div className="settings-form-group">
+            <label>📅 구글 캘린더 ID 2 (선택)</label>
+            <input type="text" className="settings-form-input" value={calendarId2} onChange={e => setCalendarId2(e.target.value)} />
+          </div>
+          <div className="settings-form-group">
+            <label>📅 구글 캘린더 ID 3 (선택)</label>
+            <input type="text" className="settings-form-input" value={calendarId3} onChange={e => setCalendarId3(e.target.value)} />
+            <small className="settings-help-text">일정 및 공지 페이지에 표시할 구글 캘린더 ID를 입력하세요. (최대 3개)</small>
+          </div>
+          <div className="settings-form-group">
+            <label>✨ Gemini API 키</label>
+            <input type="password" className="settings-form-input" placeholder="AI 종합의견 생성에 사용됩니다" value={geminiApiKey} onChange={e => setGeminiApiKey(e.target.value)} />
+            <small className="settings-help-text">서버가 없어서 이 키는 선택한 데이터 폴더의 db.json에 그대로 저장됩니다. 이 컴퓨터를 다른 사람과 같이 쓴다면 주의하세요.</small>
+          </div>
+        </div>
+        <div className="settings-modal-footer">
+          <button className="settings-btn settings-btn-secondary" onClick={onClose}>취소</button>
+          <button className="settings-btn settings-btn-primary" onClick={handleSave}>저장</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ===================================================================
+   Layout
+   =================================================================== */
+const STUDENT_ALLOWED_PATHS = ['/', '/weekly', '/learning', '/calendar', '/tools', '/links', '/students'];
+const NAV_ITEMS = [
+  { path: '/', label: '대시보드', icon: '🏠' },
+  { path: '/weekly', label: '주간 일정', icon: '📅' },
+  { path: '/attendance', label: '출석 관리', icon: '✅' },
+  { path: '/learning', label: '학습 관리', icon: '📚' },
+  { path: '/calendar', label: '일정 & 공지', icon: '🗓️' },
+  { path: '/tools', label: '학급 도구', icon: '🧰' },
+  { path: '/links', label: '바로가기', icon: '🔗' },
+  { path: '/students', label: '학생 관리', icon: '👥' },
+];
+const PAGE_TITLES = { '/': '대시보드', '/weekly': '주간 일정', '/attendance': '출석 관리', '/learning': '학습 관리', '/calendar': '일정 & 공지', '/tools': '학급 도구', '/links': '바로가기', '/students': '학생 관리' };
+const MOBILE_LABELS = { '/': '대시보드', '/weekly': '주간', '/attendance': '출석', '/learning': '학습', '/calendar': '일정', '/tools': '도구', '/links': '링크', '/students': '학생' };
+
+function Layout({ pathname, children }) {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const { state, login, logout } = useApp();
+  const { isAdmin, settings } = state;
+
+  const toggle = () => { if (isAdmin) logout(); else setShowPinModal(true); };
+  const doLogin = () => { if (login(passwordInput)) { setShowPinModal(false); setPasswordInput(''); } };
+
+  const pageTitle = PAGE_TITLES[pathname] || '대시보드';
+  const isReadOnlyPath = !isAdmin && !STUDENT_ALLOWED_PATHS.includes(pathname);
+
+  return (
+    <div className="app-layout">
+      {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
+      <aside className={`sidebar ${collapsed ? 'collapsed' : ''} ${sidebarOpen ? 'open' : ''}`}>
+        <div className="sidebar-header">
+          <div className="sidebar-logo">
+            <span className="logo-icon">🏫</span>
+            <div className="logo-text"><h1>하남중앙초등학교</h1><span className="logo-sub">4학년 2반</span></div>
+          </div>
+          <button className="sidebar-toggle" onClick={() => { setCollapsed(!collapsed); setSidebarOpen(false); }}>◀</button>
+        </div>
+        <nav className="sidebar-nav">
+          {NAV_ITEMS.map(item => {
+            if (item.path === '/attendance' && !isAdmin) return null;
+            const isAllowed = isAdmin || STUDENT_ALLOWED_PATHS.includes(item.path);
+            const isActive = pathname === item.path;
+            return (
+              <a key={item.path} href={`#${item.path}`} className={`nav-item ${isActive ? 'active' : ''} ${!isAllowed ? 'nav-disabled' : ''}`} onClick={() => setSidebarOpen(false)}>
+                <span className="nav-icon">{item.icon}</span>
+                <span className="nav-label">{item.label}</span>
+                {!isAllowed && <span className="nav-lock">🔒</span>}
+              </a>
+            );
+          })}
+        </nav>
+        <div className="sidebar-footer">
+          <div className="teacher-profile">
+            <div className="teacher-avatar">👩‍🏫</div>
+            <div className="teacher-info"><span className="teacher-name">담임교사</span><span className="teacher-role">김대붕 선생님</span></div>
+          </div>
+        </div>
+      </aside>
+
+      <main className="main-content">
+        <header className="page-header">
+          <button className="menu-btn" onClick={() => setSidebarOpen(true)}>☰</button>
+          <div className="header-content">
+            <h2 className="page-title">{pageTitle}</h2>
+            <div className="header-actions">
+              <span className="page-date">{formatDate(new Date())}</span>
+              {isAdmin && <button className="admin-btn settings-btn" onClick={() => setShowSettings(true)}>⚙️</button>}
+              <button className={`admin-btn admin-toggle-btn ${isAdmin ? 'active' : ''}`} onClick={toggle}>{isAdmin ? '🔓 선생님' : '🔒 학생'}</button>
+            </div>
+          </div>
+        </header>
+        <div className={`pages-container ${isReadOnlyPath ? 'student-read-only' : ''}`}>{children}</div>
+      </main>
+
+      <nav className="mobile-nav">
+        {NAV_ITEMS.map(item => {
+          if (item.path === '/attendance' && !isAdmin) return null;
+          const isAllowed = isAdmin || STUDENT_ALLOWED_PATHS.includes(item.path);
+          const isActive = pathname === item.path;
+          return (
+            <a key={item.path} href={`#${item.path}`} className={`mobile-nav-item ${isActive ? 'active' : ''} ${!isAllowed ? 'nav-disabled' : ''}`}>
+              {item.icon}<span>{MOBILE_LABELS[item.path]}</span>
+            </a>
+          );
+        })}
+      </nav>
+
+      {showPinModal && (
+        <div className="modal-overlay" onClick={() => setShowPinModal(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '350px' }}>
+            <div className="modal-header">
+              <h3>🔒 {settings.adminPassword ? '선생님 로그인' : '선생님 비밀번호 설정'}</h3>
+              <button className="close-btn" onClick={() => setShowPinModal(false)}>×</button>
+            </div>
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {!settings.adminPassword && <p style={{ fontSize: '0.85rem', color: 'var(--text-light)' }}>처음 사용하시는군요! 앞으로 선생님 모드 전환에 쓸 비밀번호를 정해주세요.</p>}
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: 'var(--text-light)' }}>비밀번호</label>
+                <input type="password" className="form-input" placeholder="비밀번호" value={passwordInput} onChange={e => setPasswordInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && doLogin()} autoFocus />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-primary" style={{ width: '100%' }} onClick={doLogin}>{settings.adminPassword ? '로그인' : '설정하고 시작하기'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSettings && isAdmin && <AdminSettingsModal onClose={() => setShowSettings(false)} />}
+    </div>
+  );
+}
+
+/* ===================================================================
+   DashboardPage (드래그/리사이즈 없는 고정 그리드 버전)
+   =================================================================== */
+function DashboardPage() {
+  const { state, showToast, updateSettings, addDDay, deleteDDay, addAnnouncement, updateAnnouncement, deleteAnnouncement } = useApp();
+  const { students, announcements, settings, weeklyPlans, ddays = [], isAdmin } = state;
+
+  const [lunchInfo, setLunchInfo] = useState(null);
+  const [isLoadingLunch, setIsLoadingLunch] = useState(true);
+  const [holiday, setHoliday] = useState(null);
+  const [showDdayForm, setShowDdayForm] = useState(false);
+  const [newDday, setNewDday] = useState({ name: '', date: '', emoji: '🎉' });
+  const [newNotice, setNewNotice] = useState({ title: '', content: '', type: 'general' });
+  const [showNoticeForm, setShowNoticeForm] = useState(false);
+  const [editNoticeId, setEditNoticeId] = useState(null);
+
+  useEffect(() => {
+    (async () => { setIsLoadingLunch(true); setLunchInfo(await fetchTodayLunch()); setIsLoadingLunch(false); })();
+    (async () => { setHoliday(await fetchSchoolHoliday()); })();
+  }, []);
+
+  const today = new Date();
+  const dayName = getDayName(today);
+  const currentPeriod = getCurrentPeriod();
+
+  const handleAddNotice = () => {
+    if (!newNotice.title.trim()) return;
+    const dateStr = toISODate(today);
+    if (editNoticeId) { updateAnnouncement({ id: editNoticeId, ...newNotice, date: dateStr }); showToast('공지사항이 수정되었습니다', 'success'); }
+    else { addAnnouncement({ id: generateUUID(), ...newNotice, date: dateStr }); showToast('공지사항이 등록되었습니다', 'success'); }
+    setNewNotice({ title: '', content: '', type: 'general' }); setShowNoticeForm(false); setEditNoticeId(null);
+  };
+  const handleEditNotice = (n) => { setNewNotice({ title: n.title, content: n.content, type: n.type }); setEditNoticeId(n.id); setShowNoticeForm(true); };
+  const handleDeleteNotice = (id) => { if (confirm('이 공지사항을 삭제하시겠습니까?')) { deleteAnnouncement(id); showToast('공지사항이 삭제되었습니다', 'success'); } };
+
+  const weekStart = getWeekStart(today);
+  const weekKey = toISODate(weekStart);
+  const todayPlan = weeklyPlans[weekKey]?.[dayName] || {};
+  const PERIOD_TIMES = { 1: '09:00-09:40', 2: '09:50-10:30', 3: '10:40-11:20', 4: '11:30-12:10', 5: '13:10-13:50', 6: '14:00-14:40' };
+  const todaySchedule = Object.keys(todayPlan).map(Number).sort((a, b) => a - b).filter(p => todayPlan[p]?.subject)
+    .map(p => ({ period: p, subject: todayPlan[p].subject, content: todayPlan[p].content || '', time: PERIOD_TIMES[p] || '' }));
+
+  const birthdayStudents = students.filter(s => isTodayBirthday(s.birthday));
+  const ddaySorted = [...ddays].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  const handleAddDday = () => {
+    if (!newDday.name || !newDday.date) { showToast('이름과 날짜를 입력해주세요.', 'error'); return; }
+    addDDay(newDday); setNewDday({ name: '', date: '', emoji: '🎉' }); setShowDdayForm(false); showToast('D-Day가 추가되었습니다.', 'success');
+  };
+  const handleDeleteDday = (id) => deleteDDay(id);
+  const handleUpdateThermometer = (goal, reward) => { updateSettings({ ...settings, thermometerGoal: goal, thermometerReward: reward }); showToast('우리반 온도계 설정이 변경되었습니다.', 'success'); };
+
+  const topStudents = [...students].sort((a, b) => (b.points || 0) - (a.points || 0)).slice(0, 5);
+  const totalPoints = students.reduce((sum, s) => sum + (s.points || 0), 0);
+  const goalPoints = settings?.thermometerGoal || 1500;
+  const thermometerReward = settings?.thermometerReward || '';
+
+  return (
+    <div className="dashboard-page">
+      {holiday?.isHoliday && (
+        <div className="birthday-card">
+          <span className="birthday-emoji">🏖️</span>
+          <div className="birthday-text"><div className="birthday-name">오늘은 학사일정상 휴업일입니다: {holiday.name}</div><div className="birthday-sub">출석 체크가 필요 없는 날일 수 있어요.</div></div>
+        </div>
+      )}
+      {birthdayStudents.length > 0 && (
+        <div className="birthday-card">
+          <span className="birthday-emoji">🎂</span>
+          <div className="birthday-text"><div className="birthday-name">🎉 오늘은 {birthdayStudents.map(s => s.name).join(', ')} 학생의 생일입니다!</div><div className="birthday-sub">축하해 주세요! 🎈</div></div>
+        </div>
+      )}
+
+      <div className="dashboard-fixed-grid">
+        <div className="card dashboard-widget">
+          <div className="card-header"><h3 className="card-title"><span className="emoji">📚</span> 오늘의 시간표 ({dayName}요일)</h3></div>
+          <div className="widget-content">
+            {todaySchedule.length > 0 ? (
+              <div className="schedule-list">
+                {todaySchedule.map(item => (
+                  <div key={item.period} className={`schedule-item ${currentPeriod === item.period ? 'current' : ''}`}>
+                    <div className="schedule-period">{item.period}</div>
+                    <div><div className="schedule-subject">{item.subject}</div><div className="schedule-time">{item.time}</div>
+                      {item.content && <div className="schedule-content" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>{item.content}</div>}
+                    </div>
+                    {currentPeriod === item.period && <span className="badge badge-primary" style={{ marginLeft: 'auto' }}>수업 중</span>}
+                  </div>
+                ))}
+              </div>
+            ) : (<div className="empty-state"><div className="empty-icon">🏖️</div><p>오늘은 수업이 없습니다</p><p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>주간 일정에서 시간표를 입력해주세요</p></div>)}
+          </div>
+        </div>
+
+        <div className="card dashboard-widget">
+          <Thermometer current={totalPoints} goal={goalPoints} reward={thermometerReward} isAdmin={isAdmin} onUpdate={handleUpdateThermometer} />
+        </div>
+
+        <div className="card dashboard-widget">
+          <div className="card-header"><h3 className="card-title"><span className="emoji">🍱</span> 오늘의 급식</h3><span className="badge badge-primary">하남중앙초</span></div>
+          <div className="widget-content lunch-content">
+            {isLoadingLunch ? (<div className="empty-state" style={{ padding: '1rem' }}><p>식단표 불러오는 중...</p></div>)
+              : lunchInfo ? (<div className="lunch-menu-box pretty-lunch-box"><div className="lunch-menu-text">{lunchInfo.menu}</div>{lunchInfo.calories && <div className="lunch-calories"><span className="cal-icon">⚡</span><span>{lunchInfo.calories}</span></div>}</div>)
+              : (<div className="empty-state" style={{ padding: '1rem' }}><p>오늘의 급식 정보가 없습니다.</p></div>)}
+          </div>
+        </div>
+
+        <div className="card dashboard-widget">
+          <div className="card-header"><h3 className="card-title"><span className="emoji">📅</span> D-Day</h3>{isAdmin && <button className="icon-btn" onClick={() => setShowDdayForm(!showDdayForm)}>{showDdayForm ? '❌' : '➕'}</button>}</div>
+          <div className="widget-content">
+            {showDdayForm && isAdmin && (
+              <div className="dday-form" style={{ padding: '1rem', background: 'var(--gray-50)', borderRadius: 'var(--radius-md)', marginBottom: '1rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <input type="text" placeholder="이모지" value={newDday.emoji} onChange={e => setNewDday({ ...newDday, emoji: e.target.value })} className="form-input" style={{ width: '60px' }} />
+                <input type="text" placeholder="내용" value={newDday.name} onChange={e => setNewDday({ ...newDday, name: e.target.value })} className="form-input" style={{ flex: 1 }} />
+                <input type="date" value={newDday.date} onChange={e => setNewDday({ ...newDday, date: e.target.value })} className="form-input" />
+                <button className="btn btn-primary" onClick={handleAddDday}>추가</button>
+              </div>
+            )}
+            <div className="dday-list">
+              {ddaySorted.length === 0 ? (<div className="empty-state"><p>등록된 D-Day가 없습니다.</p></div>) : ddaySorted.map((ev, i) => {
+                const dday = getDday(ev.date);
+                const isUrgent = parseInt(dday.replace('D-', '')) <= 7;
+                return (
+                  <div key={ev.id || i} className="dday-item">
+                    <div className="dday-info"><span className="dday-emoji">{ev.emoji}</span><div><div className="dday-name">{ev.name}</div><div className="dday-date">{ev.date.slice(5).replace('-', '/')}</div></div></div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span className={`dday-badge ${isUrgent ? 'urgent' : ''}`}>{dday}</span>
+                      {isAdmin && <button className="icon-btn delete-btn" style={{ fontSize: '0.75rem', padding: '2px 4px' }} onClick={() => handleDeleteDday(ev.id)}>🗑️</button>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div className="card dashboard-widget">
+          <div className="card-header"><h3 className="card-title"><span className="emoji">🏆</span> 칭찬 랭킹 (Top 5)</h3></div>
+          <div className="widget-content ranking-list">
+            {topStudents.map((student, idx) => (
+              <div key={student.id} className="ranking-item">
+                <div className="ranking-rank">{idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `${idx + 1}`}</div>
+                <div className="ranking-name">{student.name}</div>
+                <div className="ranking-score">{student.points || 0}점</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="card dashboard-widget notice-card-container">
+          <div className="card-header"><h3 className="card-title"><span className="emoji">📢</span> 공지사항</h3>{isAdmin && <button className="btn btn-sm btn-primary new-notice-btn" onClick={() => setShowNoticeForm(!showNoticeForm)}>+ 새 공지</button>}</div>
+          <div className="widget-content notice-list">
+            {isAdmin && showNoticeForm && (
+              <div className="notice-modal-overlay" onClick={() => { setShowNoticeForm(false); setEditNoticeId(null); setNewNotice({ title: '', content: '', type: 'general' }); }}>
+                <div className="notice-modal-content" onClick={e => e.stopPropagation()}>
+                  <div className="notice-modal-header"><h3>{editNoticeId ? '✏️ 공지사항 수정' : '📢 새 공지사항'}</h3><button className="notice-close-btn" onClick={() => { setShowNoticeForm(false); setEditNoticeId(null); setNewNotice({ title: '', content: '', type: 'general' }); }}>&times;</button></div>
+                  <div className="notice-modal-body">
+                    <input className="form-input" placeholder="제목을 입력하세요" value={newNotice.title} onChange={e => setNewNotice({ ...newNotice, title: e.target.value })} />
+                    <textarea className="form-input" placeholder="내용을 입력하세요" value={newNotice.content} onChange={e => setNewNotice({ ...newNotice, content: e.target.value })} rows="5" style={{ resize: 'vertical' }} />
+                    <select className="form-input" value={newNotice.type} onChange={e => setNewNotice({ ...newNotice, type: e.target.value })}>
+                      <option value="general">일반</option><option value="important">중요</option><option value="newsletter">통신문</option>
+                    </select>
+                  </div>
+                  <div className="notice-modal-footer">
+                    <button className="btn btn-secondary" onClick={() => { setShowNoticeForm(false); setEditNoticeId(null); setNewNotice({ title: '', content: '', type: 'general' }); }}>취소</button>
+                    <button className="btn btn-primary" onClick={handleAddNotice}>{editNoticeId ? '수정' : '등록'}</button>
+                  </div>
+                </div>
+              </div>
+            )}
+            <div className="notices-list">
+              {announcements.length > 0 ? announcements.map(n => (
+                <div key={n.id} className="notice-item" style={{ flexDirection: 'column', alignItems: 'flex-start', padding: '1rem', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)', marginBottom: '0.75rem', background: 'white' }}>
+                  <div style={{ display: 'flex', width: '100%', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><span className={`notice-type ${n.type}`}>{n.type === 'important' ? '중요' : n.type === 'newsletter' ? '통신문' : '일반'}</span><span className="notice-meta">{n.date}</span></div>
+                    {isAdmin && (<div style={{ display: 'flex', gap: '4px' }}><button className="icon-btn" onClick={() => handleEditNotice(n)} style={{ fontSize: '0.75rem', padding: '2px 4px' }}>✏️</button><button className="icon-btn delete-btn" onClick={() => handleDeleteNotice(n.id)} style={{ fontSize: '0.75rem', padding: '2px 4px' }}>🗑️</button></div>)}
+                  </div>
+                  <div className="notice-title" style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '0.5rem' }}>{n.title}</div>
+                  <div className="notice-content" style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>{n.content}</div>
+                </div>
+              )) : (<div className="empty-state"><p>등록된 공지사항이 없습니다.</p></div>)}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ===================================================================
+   StudentsPage
+   =================================================================== */
+function StudentsPage() {
+  const { state, dispatch, showToast, updatePoints, resetPoints, updateStudent, bulkUpdateStudents, addStudentRecord, deleteStudentRecord } = useApp();
+  const { students, isAdmin, studentRecords, assignments, settings } = state;
+  const [activeTab, setActiveTab] = useState('list');
+  const [search, setSearch] = useState('');
+  const [view, setView] = useState('card');
+  const [pointsView, setPointsView] = useState('individual');
+  const [selectedStudent, setSelectedStudent] = useState(null);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editNameValue, setEditNameValue] = useState('');
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkNames, setBulkNames] = useState('');
+  const [generatingAiId, setGeneratingAiId] = useState(null);
+  const [draggedSeat, setDraggedSeat] = useState(null);
+  const [draggedGroupStudent, setDraggedGroupStudent] = useState(null);
+  const [editGender, setEditGender] = useState('');
+  const [editBirthday, setEditBirthday] = useState('');
+  const [editParentPhone, setEditParentPhone] = useState('');
+  const [newRecordType, setNewRecordType] = useState('observation');
+  const [newRecordContent, setNewRecordContent] = useState('');
+  const [newRecordCategory, setNewRecordCategory] = useState('생활');
+
+  const filtered = students.filter(s => s.name.includes(search) || String(s.number).includes(search));
+  const sorted = [...students].sort((a, b) => b.points - a.points);
+
+  const handleAddPoints = (id, currentPoints, amount) => { updatePoints(id, currentPoints, amount); showToast(`${amount > 0 ? '+' : ''}${amount}점이 부여되었습니다.`, 'success'); };
+
+  const groupPoints = [1, 2, 3, 4, 5, 6].map(groupId => {
+    const groupStudents = students.filter(s => s.group === groupId);
+    const totalPoints = groupStudents.reduce((sum, s) => sum + (s.points || 0), 0);
+    return { groupId, totalPoints, students: groupStudents };
+  }).sort((a, b) => b.totalPoints - a.totalPoints);
+
+  const seatingList = [...students].sort((a, b) => {
+    const aIdx = a.seatIndex !== undefined ? a.seatIndex : a.number;
+    const bIdx = b.seatIndex !== undefined ? b.seatIndex : b.number;
+    return aIdx - bIdx;
+  });
+
+  const handleDragStartSeat = (e, student) => { if (!isAdmin) return; setDraggedSeat(student); e.dataTransfer.effectAllowed = 'move'; e.target.style.opacity = '0.5'; };
+  const handleDragEndSeat = (e) => { if (!isAdmin) return; e.target.style.opacity = '1'; setDraggedSeat(null); };
+  const handleDragOverSeat = (e) => { if (!isAdmin) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; };
+  const handleDropSeat = (e, targetStudent) => {
+    if (!isAdmin) return; e.preventDefault();
+    if (!draggedSeat || draggedSeat.id === targetStudent.id) return;
+    const dragIndex = draggedSeat.seatIndex !== undefined ? draggedSeat.seatIndex : draggedSeat.number;
+    const targetIndex = targetStudent.seatIndex !== undefined ? targetStudent.seatIndex : targetStudent.number;
+    bulkUpdateStudents([{ id: draggedSeat.id, seatIndex: targetIndex }, { id: targetStudent.id, seatIndex: dragIndex }]);
+  };
+
+  const handleDragStartTeam = (e, student) => { if (!isAdmin) return; setDraggedGroupStudent(student); e.dataTransfer.effectAllowed = 'move'; e.target.style.opacity = '0.5'; };
+  const handleDragEndTeam = (e) => { if (!isAdmin) return; e.target.style.opacity = '1'; setDraggedGroupStudent(null); };
+  const handleDragOverTeam = (e) => { if (!isAdmin) return; e.preventDefault(); e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = 'var(--primary-50)'; };
+  const handleDragLeaveTeam = (e) => { if (!isAdmin) return; e.currentTarget.style.borderColor = 'var(--glass-border)'; e.currentTarget.style.background = 'var(--bg-card)'; };
+  const handleDropTeam = (e, targetGroupId) => {
+    if (!isAdmin) return; e.preventDefault();
+    e.currentTarget.style.borderColor = 'var(--glass-border)'; e.currentTarget.style.background = 'var(--bg-card)';
+    if (!draggedGroupStudent || draggedGroupStudent.group === targetGroupId) return;
+    updateStudent({ id: draggedGroupStudent.id, group: targetGroupId });
+  };
+
+  const handleSelectStudent = (s) => { setSelectedStudent(s); setEditGender(s.gender || 'M'); setEditBirthday(s.birthday || ''); setEditParentPhone(s.parentPhone || ''); setIsEditingName(false); setNewRecordContent(''); };
+  const handleSaveStudentInfo = () => {
+    updateStudent({ id: selectedStudent.id, gender: editGender, birthday: editBirthday, parentPhone: editParentPhone });
+    setSelectedStudent({ ...selectedStudent, gender: editGender, birthday: editBirthday, parentPhone: editParentPhone });
+    showToast('학생 정보가 수정되었습니다.', 'success');
+  };
+  const handleResetPoints = () => {
+    if (!window.confirm(`${selectedStudent.name} 학생의 포인트를 초기화하시겠습니까?`)) return;
+    resetPoints(selectedStudent.id); setSelectedStudent({ ...selectedStudent, points: 0 }); showToast('포인트가 초기화되었습니다.', 'success');
+  };
+  const handleAddRecord = () => {
+    if (!newRecordContent.trim()) { showToast('내용을 입력해주세요.', 'error'); return; }
+    addStudentRecord(selectedStudent.id, newRecordType, newRecordContent, newRecordCategory); setNewRecordContent('');
+  };
+
+  const handleBulkUpdate = () => {
+    const lines = bulkNames.split('\n').map(l => l.trim()).filter(l => l);
+    if (lines.length === 0) { showToast('입력된 내용이 없습니다.', 'error'); return; }
+    const newStudents = lines.map((line, i) => {
+      const parts = line.split(/[\t,]+/).map(p => p.trim());
+      const existing = students.find(s => s.number === i + 1);
+      let gender = 'M';
+      if (parts[1]) { const g = parts[1].toUpperCase(); if (g === 'F' || g === '여') gender = 'F'; }
+      return { ...existing, id: existing ? existing.id : generateUUID(), number: i + 1, name: parts[0] || `학생${i + 1}`, gender, birthday: parts[2] || (existing ? existing.birthday : ''), points: existing ? existing.points : 0, group: existing ? existing.group : Math.ceil((i + 1) / 4) };
+    });
+    dispatch({ type: 'SET_STUDENTS', payload: newStudents });
+    bulkUpdateStudents(newStudents);
+    showToast(`총 ${newStudents.length}명으로 명단이 갱신되었습니다.`, 'success');
+    setShowBulkModal(false); setBulkNames('');
+  };
+
+  const handleExcelUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const data = await parseStudentExcel(file);
+      if (data.length === 0) { showToast('데이터가 없습니다.', 'error'); return; }
+      const newStudents = data.map((row, i) => {
+        const existing = students.find(s => s.number === i + 1);
+        let gender = 'M';
+        if (row['성별']) { const g = String(row['성별']).toUpperCase(); if (g === 'F' || g === '여') gender = 'F'; }
+        return { ...existing, id: existing ? existing.id : generateUUID(), number: i + 1, name: row['이름'] || `학생${i + 1}`, gender, birthday: row['생일'] || (existing ? existing.birthday : ''), parentPhone: row['연락처'] || (existing ? existing.parentPhone : ''), points: existing ? existing.points : 0, group: existing ? existing.group : Math.ceil((i + 1) / 4) };
+      });
+      dispatch({ type: 'SET_STUDENTS', payload: newStudents });
+      bulkUpdateStudents(newStudents);
+      showToast(`총 ${newStudents.length}명으로 명단이 갱신되었습니다.`, 'success');
+    } catch (err) { showToast('엑셀 파일을 읽는 중 오류가 발생했습니다.', 'error'); }
+    e.target.value = null;
+  };
+
+  const handleGenerateAI = async (student) => {
+    const recs = studentRecords[student.id] || [];
+    const evals = assignments.filter(a => a.submissions?.[student.id]).map(a => ({ title: a.title, grade: a.submissions[student.id].grade }));
+    const studentData = { name: student.name, gender: student.gender, points: student.points || 0, records: recs, evaluations: evals };
+    try {
+      setGeneratingAiId(student.id);
+      const summary = await generateBehaviorSummary(studentData, settings.geminiApiKey);
+      updateStudent({ ...student, aiSummary: summary });
+      showToast('AI가 종합의견을 생성했습니다.', 'success');
+    } catch (err) { showToast('AI 생성 중 오류가 발생했습니다: ' + err.message, 'error'); }
+    finally { setGeneratingAiId(null); }
+  };
+
+  const handleEvaluate = (assignmentId, studentId, grade) => { dispatch({ type: 'EVALUATE_ASSIGNMENT', payload: { id: assignmentId, studentId, grade } }); showToast('평가가 저장되었습니다.', 'success'); };
+
+  const records = selectedStudent ? (studentRecords[selectedStudent.id] || []) : [];
+
+  return (
+    <div className="students-page">
+      <div className="students-tabs">
+        <button className={`tab-btn ${activeTab === 'list' ? 'active' : ''}`} onClick={() => setActiveTab('list')}>👥 학생 목록</button>
+        <button className={`tab-btn ${activeTab === 'behavior' ? 'active' : ''} ${!isAdmin ? 'tab-locked' : ''}`} onClick={() => isAdmin ? setActiveTab('behavior') : showToast('관리자 전용 기능입니다.', 'error')}>🌱 행동발달 {!isAdmin && <span className="lock-icon">🔒</span>}</button>
+        <button className={`tab-btn ${activeTab === 'evaluation' ? 'active' : ''} ${!isAdmin ? 'tab-locked' : ''}`} onClick={() => isAdmin ? setActiveTab('evaluation') : showToast('관리자 전용 기능입니다.', 'error')}>📝 학습평가 {!isAdmin && <span className="lock-icon">🔒</span>}</button>
+      </div>
+
+      {activeTab === 'list' && (
+        <>
+          <div className="students-toolbar">
+            <div className="search-wrapper">
+              <span>🔍</span>
+              <input className="search-input" placeholder="학생 이름 또는 번호 검색..." value={search} onChange={e => setSearch(e.target.value)} />
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              {isAdmin && (
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <button className="btn-admin-action btn-admin-outline" onClick={downloadStudentTemplate}>📥 양식 다운로드</button>
+                  <label className="btn-admin-action btn-admin-excel" style={{ cursor: 'pointer', margin: 0 }}>📤 엑셀 업로드<input type="file" accept=".xlsx, .xls" style={{ display: 'none' }} onChange={handleExcelUpload} /></label>
+                  <button className="btn-admin-action btn-admin-primary" onClick={() => { const existingNames = students.map(s => `${s.name}\t${s.gender || ''}\t${s.birthday || ''}`).join('\n'); setBulkNames(existingNames); setShowBulkModal(true); }}>📝 일괄 수정</button>
+                </div>
+              )}
+              <div className="view-toggle">
+                {[{ v: 'card', icon: '▦' }, { v: 'table', icon: '☰' }, { v: 'seating', icon: '⊞' }, { v: 'points', icon: '⭐' }].map(b => (
+                  <button key={b.v} className={`view-toggle-btn ${view === b.v ? 'active' : ''}`} onClick={() => setView(b.v)}>{b.icon}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {view === 'card' && (
+            <div className="students-grid">
+              {filtered.map(s => (
+                <div key={s.id} className="student-card" onClick={() => handleSelectStudent(s)}>
+                  <div className="student-card-header">
+                    <div className={`avatar ${getAvatarColor(s.gender)}`}>{getInitials(s.name)}</div>
+                    <div><div className="student-number">{s.number}번</div><div className="student-name-main">{s.name}</div></div>
+                  </div>
+                  <div className="student-card-body">
+                    <div className="student-meta"><span>{s.gender === 'M' ? '👦' : '👧'} {s.birthday?.slice(5) || ''}</span></div>
+                    {s.allergies && <div className="student-meta allergy">⚠️ {s.allergies}</div>}
+                    {s.healthNotes && <div className="student-meta">🏥 {s.healthNotes}</div>}
+                  </div>
+                  <div className="student-card-footer">
+                    <span className="student-points">⭐ {s.points}점</span>
+                    {isAdmin && (<div className="student-actions"><button className="point-add plus" onClick={e => { e.stopPropagation(); handleAddPoints(s.id, s.points, 1); }}>+</button><button className="point-add minus" onClick={e => { e.stopPropagation(); handleAddPoints(s.id, s.points, -1); }}>-</button></div>)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {view === 'table' && (
+            <div className="table-container">
+              <table>
+                <thead><tr><th>번호</th><th>이름</th><th>성별</th><th>생일</th><th>알레르기</th><th>건강</th><th>포인트</th></tr></thead>
+                <tbody>
+                  {filtered.map(s => (
+                    <tr key={s.id} onClick={() => handleSelectStudent(s)} style={{ cursor: 'pointer' }}>
+                      <td>{s.number}</td><td><div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div className={`avatar sm ${getAvatarColor(s.gender)}`}>{getInitials(s.name)}</div>{s.name}</div></td>
+                      <td>{s.gender === 'M' ? '남' : '여'}</td><td>{s.birthday?.slice(5) || '-'}</td><td>{s.allergies || '-'}</td><td>{s.healthNotes || '-'}</td><td><span className="student-points">⭐ {s.points}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {view === 'seating' && (
+            <div className="seating-container">
+              <div className="seating-header"><h3>📐 자리 배치도</h3>{isAdmin && <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginLeft: '1rem' }}>💡 이름표를 드래그 앤 드롭하여 자리를 바꿀 수 있습니다.</span>}</div>
+              <div className="seating-board">
+                <div className="teacher-desk">교탁</div>
+                <div className="seating-grid-dynamic">
+                  {seatingList.map((s) => (
+                    <div key={s.id} className="seat occupied" draggable={isAdmin} onDragStart={(e) => handleDragStartSeat(e, s)} onDragEnd={handleDragEndSeat} onDragOver={handleDragOverSeat} onDrop={(e) => handleDropSeat(e, s)} onClick={() => handleSelectStudent(s)} style={{ cursor: isAdmin ? 'grab' : 'pointer' }}>
+                      <div className="seat-name">{s.name}</div><div className="seat-number">{s.number}번</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {view === 'points' && (
+            <div className="points-section">
+              <div className="points-header" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem', alignItems: 'center' }}>
+                <h3 style={{ margin: 0 }}>🏆 칭찬 포인트 랭킹</h3>
+                <div className="points-tabs" style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button className={`admin-btn ${pointsView === 'individual' ? 'active' : ''}`} style={pointsView === 'individual' ? { background: 'var(--primary)', color: 'white', borderColor: 'var(--primary)' } : {}} onClick={() => setPointsView('individual')}>개인별</button>
+                  <button className={`admin-btn ${pointsView === 'group' ? 'active' : ''}`} style={pointsView === 'group' ? { background: 'var(--primary)', color: 'white', borderColor: 'var(--primary)' } : {}} onClick={() => setPointsView('group')}>팀별</button>
+                </div>
+              </div>
+              {pointsView === 'individual' ? (
+                <div className="points-leaderboard">
+                  {sorted.map((s, i) => (
+                    <div key={s.id} className="points-row glass-card" style={{ background: 'var(--bg-card)', border: '1px solid var(--glass-border)', borderRadius: 'var(--radius-md)', padding: '0.75rem 1rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                      <div className={`points-rank ${i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : ''}`}>{i + 1}</div>
+                      <div className={`avatar sm ${getAvatarColor(s.gender)}`}>{getInitials(s.name)}</div>
+                      <div className="points-student-name" style={{ flex: 1, fontWeight: 600 }}>{s.name} <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginLeft: '0.5rem', fontWeight: 500 }}>{s.group}팀</span></div>
+                      <div className="points-score" style={{ fontWeight: 800, fontSize: '1.1rem', color: 'var(--primary)' }}>⭐ {s.points}</div>
+                      {isAdmin && (<div className="points-actions" style={{ display: 'flex', gap: '0.25rem' }}><button className="btn btn-primary" onClick={() => handleAddPoints(s.id, s.points, 5)}>+5점</button><button className="btn" style={{ background: 'var(--success)', color: 'white' }} onClick={() => handleAddPoints(s.id, s.points, 10)}>+10점</button><button className="btn btn-danger" onClick={() => handleAddPoints(s.id, s.points, -5)}>-5점</button></div>)}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="points-leaderboard group-leaderboard">
+                  <div style={{ marginBottom: '1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{isAdmin ? '💡 학생 이름표를 드래그하여 다른 팀으로 옮겨보세요.' : ''}</div>
+                  {groupPoints.map((g, i) => (
+                    <div key={g.groupId} className="points-row glass-card group-card-dnd" onDragOver={handleDragOverTeam} onDragLeave={handleDragLeaveTeam} onDrop={(e) => handleDropTeam(e, g.groupId)} style={{ background: 'var(--bg-card)', border: '2px solid var(--glass-border)', borderRadius: 'var(--radius-lg)', padding: '1.25rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'flex-start', gap: '1.5rem' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
+                        <div className={`points-rank ${i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : ''}`} style={{ fontSize: '1.2rem', width: '30px', height: '30px', textAlign: 'center' }}>{i + 1}</div>
+                        <div className="group-avatar" style={{ width: '40px', height: '40px', borderRadius: 'var(--radius-full)', background: 'var(--primary-50)', color: 'var(--primary-dark)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '1.2rem' }}>{g.groupId}</div>
+                        <div className="points-score" style={{ fontWeight: 800, fontSize: '1.1rem', color: 'var(--primary-dark)' }}>⭐ {g.totalPoints}</div>
+                      </div>
+                      <div className="points-student-name" style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 800, fontSize: '1.1rem', marginBottom: '0.75rem', color: 'var(--text-primary)' }}>{g.groupId}팀</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                          {g.students.map(s => (
+                            <div key={s.id} className="team-student-pill" draggable={isAdmin} onDragStart={(e) => handleDragStartTeam(e, s)} onDragEnd={handleDragEndTeam} style={{ padding: '0.4rem 0.75rem', background: 'var(--gray-50)', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-xl)', fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: isAdmin ? 'grab' : 'default' }}>
+                              <div className={`avatar sm ${getAvatarColor(s.gender)}`} style={{ width: '20px', height: '20px', fontSize: '0.6rem' }}>{getInitials(s.name)}</div>{s.name}
+                            </div>
+                          ))}
+                          {g.students.length === 0 && <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>편성된 학생이 없습니다. 드래그하여 추가하세요.</span>}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      {activeTab === 'behavior' && (
+        <div className="behavior-tab">
+          <div className="behavior-grid" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            {students.map(s => {
+              const recs = studentRecords[s.id] || [];
+              return (
+                <div key={s.id} className="behavior-student-card">
+                  <div style={{ width: '160px', flexShrink: 0, textAlign: 'center', borderRight: '1px solid var(--border-light)', paddingRight: '1rem', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <div className={`avatar xl ${getAvatarColor(s.gender)}`} style={{ margin: '0 auto 0.75rem auto' }}>{getInitials(s.name)}</div>
+                    <h3 style={{ margin: '0 0 0.5rem 0' }}>{s.number}. {s.name}</h3>
+                    {isAdmin && <button className="btn-ai-generate" onClick={() => handleGenerateAI(s)} disabled={generatingAiId === s.id}>{generatingAiId === s.id ? '⏳ 생성 중...' : '✨ AI 생성'}</button>}
+                    {isAdmin && <button className="btn btn-sm btn-secondary" onClick={() => handleSelectStudent(s)} style={{ marginTop: '0.5rem', width: '100%', fontWeight: 700 }}>➕ 기록 추가</button>}
+                  </div>
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                    <h4 style={{ marginBottom: '0.5rem', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}><span>📝 누적 기록</span><span className="badge">{recs.length}건</span></h4>
+                    <div className="behavior-record-box">
+                      {recs.length > 0 ? (
+                        <ul style={{ paddingLeft: '1.25rem', margin: 0, fontSize: '0.875rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                          {recs.map((r, i) => (<li key={i}><strong style={{ color: 'var(--primary)' }}>[{r.date}]</strong> {r.content}{isAdmin && <button style={{ background: 'transparent', border: 'none', color: '#DC2626', fontSize: '0.75rem', cursor: 'pointer', marginLeft: '0.5rem', fontWeight: 600 }} onClick={() => { if (confirm('이 기록을 삭제하시겠습니까?')) deleteStudentRecord(s.id, r.id); }}>🗑️</button>}</li>))}
+                        </ul>
+                      ) : (<div className="empty-state" style={{ minHeight: '100px', padding: 0 }}>기록이 없습니다.</div>)}
+                    </div>
+                  </div>
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                    <h4 style={{ marginBottom: '0.5rem', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 800 }}>✨ 종합의견 (AI)</h4>
+                    <div className="behavior-ai-box">
+                      {s.aiSummary ? (<div style={{ whiteSpace: 'pre-wrap' }}>{s.aiSummary}</div>) : (<div className="empty-state" style={{ minHeight: '100px', padding: 0, opacity: 0.6, fontSize: '0.85rem' }}>AI 생성 버튼을 눌러 종합의견을 작성해보세요.</div>)}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'evaluation' && (
+        <div className="evaluation-tab">
+          {assignments.length === 0 ? (<div className="empty-state"><p>등록된 과제 및 수행평가가 없습니다.</p></div>) : (
+            <div className="table-container" style={{ overflowX: 'auto', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
+              <table style={{ minWidth: '100%', whiteSpace: 'nowrap' }}>
+                <thead><tr><th style={{ position: 'sticky', left: 0, zIndex: 10, background: 'var(--gray-50)', minWidth: '120px' }}>학생 이름</th>
+                  {assignments.map(a => (<th key={a.id} style={{ minWidth: '160px', textAlign: 'center', padding: '1rem' }}>
+                    <div style={{ display: 'inline-block', padding: '0.2rem 0.5rem', background: a.type === '수행평가' ? '#FFF4ED' : '#ECFDF5', color: a.type === '수행평가' ? '#E8590C' : '#059669', borderRadius: '4px', fontSize: '0.75rem', marginBottom: '0.4rem' }}>{a.type}</div>
+                    <div style={{ fontSize: '0.9rem', color: 'var(--text-primary)', fontWeight: 700, marginBottom: '0.25rem', whiteSpace: 'normal', wordBreak: 'keep-all' }}>{a.title}</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{a.dueDate}</div>
+                    {isAdmin && <button style={{ background: 'transparent', border: 'none', color: '#DC2626', fontSize: '0.75rem', cursor: 'pointer', marginTop: '0.5rem', fontWeight: 600 }} onClick={() => { if (confirm('이 항목을 정말 삭제하시겠습니까?')) { dispatch({ type: 'DELETE_ASSIGNMENT', payload: a.id }); showToast('삭제되었습니다.', 'success'); } }}>🗑️ 삭제</button>}
+                  </th>))}
+                </tr></thead>
+                <tbody>
+                  {students.map(s => (
+                    <tr key={s.id}>
+                      <td style={{ position: 'sticky', left: 0, zIndex: 5, background: 'var(--bg-card)', fontWeight: 600, borderRight: '1px solid var(--border-light)' }}>{s.number}번 <span style={{ marginLeft: '0.25rem' }}>{s.name}</span></td>
+                      {assignments.map(a => {
+                        const submission = a.submissions?.[s.id];
+                        const grade = submission?.grade;
+                        return (
+                          <td key={`${s.id}-${a.id}`} style={{ textAlign: 'center', background: submission ? 'transparent' : '#FEF2F2' }}>
+                            {submission ? (isAdmin ? (
+                              <div style={{ display: 'flex', gap: '0.25rem', justifyContent: 'center' }}>
+                                {['상', '중', '하'].map(g => (<button key={g} className={`grade-btn ${grade === g ? 'active' : ''}`} style={{ padding: '4px 10px', borderRadius: '4px', border: '1px solid var(--border-light)', background: grade === g ? 'var(--primary)' : 'white', color: grade === g ? 'white' : 'var(--text-secondary)', cursor: 'pointer', fontWeight: 600, fontSize: '0.75rem' }} onClick={() => handleEvaluate(a.id, s.id, g)}>{g}</button>))}
+                              </div>
+                            ) : (<span style={{ display: 'inline-block', padding: '0.25rem 0.75rem', background: '#D1FAE5', color: '#065F46', borderRadius: '4px', fontWeight: 700, fontSize: '0.8rem' }}>{grade || '채점 대기'}</span>)
+                            ) : (<span style={{ color: '#DC2626', fontSize: '0.8rem', fontWeight: 600 }}>미제출</span>)}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {selectedStudent && (
+        <div className="modal-overlay" onClick={() => { setSelectedStudent(null); setIsEditingName(false); }}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><h3 className="modal-title">학생 정보</h3><button className="modal-close" onClick={() => { setSelectedStudent(null); setIsEditingName(false); }}>&times;</button></div>
+            <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+              <div className="student-detail-header">
+                <div className={`avatar xl ${getAvatarColor(selectedStudent.gender)}`}>{getInitials(selectedStudent.name)}</div>
+                <div className="student-detail-info">
+                  <div className="student-name-edit-wrapper">
+                    {isEditingName ? (
+                      <div className="edit-name-form">
+                        <input type="text" className="form-input" value={editNameValue} onChange={(e) => setEditNameValue(e.target.value)} autoFocus style={{ width: '120px', padding: '0.25rem 0.5rem', minHeight: '30px' }} />
+                        <button className="btn btn-primary btn-sm" onClick={() => { if (editNameValue.trim()) { updateStudent({ id: selectedStudent.id, name: editNameValue.trim() }); setSelectedStudent({ ...selectedStudent, name: editNameValue.trim() }); showToast('이름이 수정되었습니다.', 'success'); } setIsEditingName(false); }}>저장</button>
+                        <button className="btn btn-secondary btn-sm" onClick={() => setIsEditingName(false)}>취소</button>
+                      </div>
+                    ) : (
+                      <div className="name-display" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <h3>{selectedStudent.name}</h3>
+                        {isAdmin && <button className="edit-name-btn" onClick={() => { setEditNameValue(selectedStudent.name); setIsEditingName(true); }} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1.2rem' }}>✎</button>}
+                      </div>
+                    )}
+                  </div>
+                  <p>{selectedStudent.number}번 · {selectedStudent.gender === 'M' ? '남학생' : '여학생'} · 생일: {selectedStudent.birthday}</p>
+                </div>
+              </div>
+              {isAdmin && (
+                <div className="student-edit-section">
+                  <h4 style={{ fontSize: '0.875rem', fontWeight: 700, marginBottom: '0.75rem' }}>📝 정보 수정</h4>
+                  <div className="edit-fields-grid">
+                    <div className="edit-field"><label>성별</label><select className="form-input" value={editGender} onChange={e => setEditGender(e.target.value)}><option value="M">남</option><option value="F">여</option></select></div>
+                    <div className="edit-field"><label>생일</label><input type="date" className="form-input" value={editBirthday} onChange={e => setEditBirthday(e.target.value)} /></div>
+                    <div className="edit-field"><label>연락처</label><input type="text" className="form-input" value={editParentPhone} onChange={e => setEditParentPhone(e.target.value)} placeholder="010-0000-0000" /></div>
+                    <div className="edit-field" style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end' }}><button className="btn btn-primary btn-sm" onClick={handleSaveStudentInfo}>저장</button><button className="btn btn-danger btn-sm" onClick={handleResetPoints}>포인트 초기화</button></div>
+                  </div>
+                </div>
+              )}
+              <div style={{ marginBottom: '0.75rem' }}><strong style={{ fontSize: '0.875rem' }}>📞 학부모 연락처:</strong><span style={{ marginLeft: '0.5rem', fontSize: '0.875rem' }}>{selectedStudent.parentPhone || '미등록'}</span></div>
+              {isAdmin && (
+                <div className="record-input-section">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}><h4 style={{ fontSize: '0.875rem', fontWeight: 700, margin: 0 }}>📋 관찰/상담 기록 추가</h4></div>
+                  <div className="record-input-row">
+                    <select className="form-input" value={newRecordType} onChange={e => setNewRecordType(e.target.value)} style={{ width: 'auto', minWidth: '100px' }}><option value="observation">관찰</option><option value="counseling">상담</option></select>
+                    <select className="form-input" value={newRecordCategory} onChange={e => setNewRecordCategory(e.target.value)} style={{ width: 'auto', minWidth: '80px' }}>{['생활', '학습', '교우', '건강', '기타'].map(c => <option key={c} value={c}>{c}</option>)}</select>
+                  </div>
+                  <div className="record-input-row" style={{ marginTop: '0.5rem' }}>
+                    <textarea className="form-input" placeholder="관찰/상담 내용을 입력하세요..." value={newRecordContent} onChange={e => setNewRecordContent(e.target.value)} rows="4" style={{ resize: 'vertical', flex: 1 }} />
+                    <button className="btn btn-primary" onClick={handleAddRecord} style={{ alignSelf: 'flex-end' }}>저장</button>
+                  </div>
+                </div>
+              )}
+              {records.length > 0 && (
+                <div className="records-list-section">
+                  <h4 style={{ fontSize: '0.875rem', fontWeight: 700, marginBottom: '0.75rem' }}>📖 기록 목록 ({records.length}건)</h4>
+                  <div className="counseling-list" style={{ marginTop: '0.5rem' }}>
+                    {records.map((c, i) => (
+                      <div key={c.id || i} className="counseling-item">
+                        <div className="counseling-date">{c.date} · <span className={`record-type-badge ${c.type}`}>{c.type === 'observation' ? '관찰' : c.type === 'counseling' ? '상담' : c.type}</span> · {c.category}
+                          {isAdmin && <button style={{ background: 'transparent', border: 'none', color: '#DC2626', fontSize: '0.75rem', cursor: 'pointer', marginLeft: '0.5rem', fontWeight: 600 }} onClick={() => { if (confirm('이 기록을 삭제하시겠습니까?')) deleteStudentRecord(selectedStudent.id, c.id); }}>🗑️ 삭제</button>}
+                        </div>
+                        <div className="counseling-content">{c.content}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBulkModal && (
+        <div className="modal-overlay" onClick={() => setShowBulkModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '450px' }}>
+            <div className="modal-header"><h3 className="modal-title">📝 학생 이름 일괄 수정</h3><button className="modal-close" onClick={() => setShowBulkModal(false)}>&times;</button></div>
+            <div className="modal-body">
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>한 줄에 한 명씩 탭(Tab)이나 쉼표(,)로 구분하여 <strong>이름, 성별(M/F), 생일(YYYY-MM-DD)</strong>을 입력하세요.<br />(예: <code>김학생, M, 2014-05-01</code>)</p>
+              <textarea className="form-input" value={bulkNames} onChange={e => setBulkNames(e.target.value)} rows="15" style={{ resize: 'vertical', fontFamily: 'monospace', lineHeight: '1.8' }} placeholder={'이름\t성별\t생일'} />
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', justifyContent: 'flex-end' }}><button className="btn btn-secondary" onClick={() => setShowBulkModal(false)}>취소</button><button className="btn btn-primary" onClick={handleBulkUpdate}>저장</button></div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ===================================================================
+   AttendancePage
+   =================================================================== */
+const STATUS_MAP = { present: { label: '출석', icon: '✅', color: 'present' }, absent: { label: '결석', icon: '❌', color: 'absent' }, late: { label: '지각', icon: '⏰', color: 'late' }, 'early-leave': { label: '조퇴', icon: '🏃', color: 'early-leave' } };
+
+function AttendancePage() {
+  const { state, updateAttendance, loadAttendanceByDate, loadMonthlyAttendance, showToast } = useApp();
+  const { students, attendance, selectedAttendanceDate, monthlyAttendance, isAdmin } = state;
+  const [activeSelector, setActiveSelector] = useState(null);
+  const [monthlyActiveCell, setMonthlyActiveCell] = useState(null);
+  const [viewMode, setViewMode] = useState('daily');
+  const [monthYear, setMonthYear] = useState({ year: new Date().getFullYear(), month: new Date().getMonth() });
+
+  const handleDateChange = (e) => loadAttendanceByDate(e.target.value);
+  const handleMonthlyStatus = (studentId, date, status) => {
+    if (!isAdmin) { showToast('관리자 모드에서만 수정할 수 있습니다.', 'error'); return; }
+    updateAttendance(studentId, status, '', date);
+    const s = students.find(st => st.id === studentId);
+    showToast(`${s.name} (${date.slice(5).replace('-', '/')}) → ${STATUS_MAP[status].label}`, 'success');
+    setMonthlyActiveCell(null);
+  };
+
+  useEffect(() => { if (viewMode === 'monthly') loadMonthlyAttendance(monthYear.year, monthYear.month); }, [viewMode, monthYear, loadMonthlyAttendance]);
+
+  const counts = {
+    present: Object.values(attendance).filter(a => a.status === 'present').length,
+    absent: Object.values(attendance).filter(a => a.status === 'absent').length,
+    late: Object.values(attendance).filter(a => a.status === 'late').length,
+    'early-leave': Object.values(attendance).filter(a => a.status === 'early-leave').length,
+  };
+
+  const handleStatus = (studentId, status) => {
+    if (!isAdmin) { showToast('관리자 모드에서만 수정할 수 있습니다.', 'error'); return; }
+    updateAttendance(studentId, status, '', selectedAttendanceDate);
+    const s = students.find(st => st.id === studentId);
+    showToast(`${s.name} → ${STATUS_MAP[status].label}`, 'success');
+    setActiveSelector(null);
+  };
+
+  const handleSaveAllToday = () => {
+    if (!isAdmin) return;
+    students.forEach(s => { const att = attendance[s.id] || { status: 'present', note: '' }; updateAttendance(s.id, att.status, att.note || '', selectedAttendanceDate); });
+    showToast('오늘의 출석 현황이 모두 저장되었습니다.', 'success');
+  };
+
+  const getDaysInMonth = (year, month) => {
+    const days = [];
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    for (let d = 1; d <= lastDay; d++) {
+      const date = new Date(year, month, d);
+      const dow = date.getDay();
+      if (dow !== 0 && dow !== 6) days.push(`${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+    }
+    return days;
+  };
+
+  const monthDays = getDaysInMonth(monthYear.year, monthYear.month);
+  const monthLabel = `${monthYear.year}년 ${monthYear.month + 1}월`;
+
+  return (
+    <div className="attendance-page">
+      <div className="attendance-view-toggle">
+        <button className={`view-tab ${viewMode === 'daily' ? 'active' : ''}`} onClick={() => setViewMode('daily')}>📋 일별 출석</button>
+        <button className={`view-tab ${viewMode === 'monthly' ? 'active' : ''}`} onClick={() => setViewMode('monthly')}>📊 월별 현황</button>
+      </div>
+
+      {viewMode === 'daily' ? (
+        <>
+          <div className="attendance-controls">
+            <div className="date-display-box"><span className="date-display-icon">📅</span><input type="date" className="attendance-date-input" value={selectedAttendanceDate} onChange={handleDateChange} /></div>
+            {isAdmin && <button className="save-attendance-btn" onClick={handleSaveAllToday}>오늘의 출석 입력 완료</button>}
+            <div className="attendance-summary-bar">{Object.entries(STATUS_MAP).map(([key, val]) => (<div key={key} className={`attendance-count ${val.color}`}><span>{val.icon}</span><span>{val.label}</span><span className="count-num">{counts[key]}</span></div>))}</div>
+          </div>
+          {isAdmin && <p className="attendance-tip">💡 학생 카드를 클릭하면 출석 상태를 변경할 수 있습니다.</p>}
+          <div className="attendance-grid">
+            {students.map(s => {
+              const att = attendance[s.id] || { status: 'present' };
+              const info = STATUS_MAP[att.status];
+              return (
+                <div key={s.id} className={`attendance-cell ${att.status}`} style={{ zIndex: activeSelector === s.id ? 100 : 1 }} onClick={() => { if (isAdmin) setActiveSelector(activeSelector === s.id ? null : s.id); }}>
+                  <div className="student-num">{s.number}번</div><div className="student-name">{s.name}</div><div className="status-icon">{info.icon}</div>
+                  {att.note && <div className="att-note">{att.note}</div>}
+                  {activeSelector === s.id && (
+                    <div className="attendance-status-selector show" onClick={e => e.stopPropagation()}>
+                      {Object.entries(STATUS_MAP).map(([key, val]) => (<button key={key} className={`status-option ${att.status === key ? 'active' : ''}`} onClick={() => handleStatus(s.id, key)}>{val.icon} {val.label}</button>))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      ) : (
+        <div className="monthly-attendance">
+          <div className="monthly-nav">
+            <button className="month-nav-btn" onClick={() => { if (monthYear.month === 0) setMonthYear({ year: monthYear.year - 1, month: 11 }); else setMonthYear({ ...monthYear, month: monthYear.month - 1 }); }}>◀</button>
+            <span className="month-label">{monthLabel}</span>
+            <button className="month-nav-btn" onClick={() => { if (monthYear.month === 11) setMonthYear({ year: monthYear.year + 1, month: 0 }); else setMonthYear({ ...monthYear, month: monthYear.month + 1 }); }}>▶</button>
+          </div>
+          <div className="monthly-table-wrapper">
+            <table className="monthly-table">
+              <thead><tr><th className="sticky-col">번호</th><th className="sticky-col-name">이름</th>
+                {monthDays.map(d => { const date = new Date(d); const dayNames = ['일', '월', '화', '수', '목', '금', '토']; return (<th key={d} className="date-col"><div className="date-header"><span>{date.getDate()}</span><span className="date-dow">{dayNames[date.getDay()]}</span></div></th>); })}
+              </tr></thead>
+              <tbody>
+                {students.map(s => (
+                  <tr key={s.id}>
+                    <td className="sticky-col">{s.number}</td><td className="sticky-col-name">{s.name}</td>
+                    {monthDays.map(d => {
+                      const record = monthlyAttendance[d]?.[s.id];
+                      const status = record?.status || null;
+                      const isCellActive = monthlyActiveCell?.studentId === s.id && monthlyActiveCell?.date === d;
+                      return (
+                        <td key={d} className={`monthly-cell ${status || 'no-data'} ${isCellActive ? 'active' : ''}`} title={record?.note || ''} onClick={() => { if (isAdmin) setMonthlyActiveCell(isCellActive ? null : { studentId: s.id, date: d }); }} style={{ position: 'relative', cursor: isAdmin ? 'pointer' : 'default' }}>
+                          {status ? (<span className={`monthly-status ${status}`}>{status === 'present' ? '○' : status === 'absent' ? '✕' : status === 'late' ? '△' : '▽'}</span>) : (<span className="monthly-status no-data">-</span>)}
+                          {isAdmin && isCellActive && (<div className="attendance-status-selector show monthly-selector" onClick={e => e.stopPropagation()}>{Object.entries(STATUS_MAP).map(([key, val]) => (<button key={key} className={`status-option ${status === key ? 'active' : ''}`} onClick={() => handleMonthlyStatus(s.id, d, key)}>{val.icon} {val.label}</button>))}</div>)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="monthly-legend">
+            <span className="legend-item"><span className="legend-icon present">○</span> 출석</span>
+            <span className="legend-item"><span className="legend-icon absent">✕</span> 결석</span>
+            <span className="legend-item"><span className="legend-icon late">△</span> 지각</span>
+            <span className="legend-item"><span className="legend-icon early-leave">▽</span> 조퇴</span>
+            <span className="legend-item"><span className="legend-icon no-data">-</span> 기록 없음</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ===================================================================
+   LearningPage
+   =================================================================== */
+function LearningPage() {
+  const { state, showToast, addAssignment, updateAssignmentSubmissions, deleteAssignment } = useApp();
+  const { students, assignments, isAdmin } = state;
+  const currentActivity = [...assignments].filter(a => a.subject === '활동').sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))[0];
+  const [isEditingActivity, setIsEditingActivity] = useState(false);
+  const [tempActivityContent, setTempActivityContent] = useState('');
+  const [tempActivityType, setTempActivityType] = useState('과제');
+  const [selectedAssignment, setSelectedAssignment] = useState(null);
+  // 아래 목록에서 과제를 선택하면 체크 그리드도 그 과제 기준으로 바뀌고, 선택을 풀면 최신 활동으로 돌아감
+  const activeActivity = selectedAssignment || currentActivity;
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 5;
+  const timerRef = useRef(null);
+
+  const handlePointerDown = (studentId) => {
+    if (!activeActivity) return;
+    timerRef.current = setTimeout(() => {
+      if (activeActivity.submissions?.[studentId]) updateAssignmentSubmissions(activeActivity.id, { [studentId]: null });
+      timerRef.current = null;
+    }, 500);
+  };
+  const handlePointerUp = (studentId) => {
+    if (!activeActivity) return;
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; if (!activeActivity.submissions?.[studentId]) updateAssignmentSubmissions(activeActivity.id, { [studentId]: { timestamp: new Date().toISOString() } }); }
+  };
+  const handlePointerLeave = () => { if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; } };
+
+  const sortedAssignments = [...assignments].reverse();
+  const totalPages = Math.ceil(sortedAssignments.length / itemsPerPage) || 1;
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const displayAssignments = sortedAssignments.slice(startIndex, startIndex + itemsPerPage);
+
+  return (
+    <div className="learning-page">
+      <div className="activity-check-section">
+        <h3 className="section-title" style={{ marginBottom: '1rem' }}><span>✅</span> 활동 완료 체크</h3>
+        <div className="activity-content-box">
+          {isAdmin && isEditingActivity ? (
+            <div className="activity-edit-mode">
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                <select className="form-input" value={tempActivityType} onChange={e => setTempActivityType(e.target.value)} style={{ width: '120px' }}><option value="과제">과제</option><option value="수행평가">수행평가</option></select>
+                <input type="text" className="activity-input form-input" value={tempActivityContent} onChange={(e) => setTempActivityContent(e.target.value)} placeholder="활동 내용을 입력하세요" autoFocus style={{ flex: 1 }} />
+              </div>
+              <div className="activity-edit-actions">
+                <button className="activity-btn primary" onClick={() => {
+                  if (tempActivityContent.trim() !== '') { addAssignment({ id: generateUUID(), title: tempActivityContent, subject: '활동', type: tempActivityType, dueDate: toISODate(new Date()), createdAt: new Date().toISOString(), submissions: {}, total: students.length }); showToast('새로운 활동이 추가되었습니다.', 'success'); setSelectedAssignment(null); }
+                  setIsEditingActivity(false);
+                }}>저장</button>
+                <button className="activity-btn secondary" onClick={() => { setTempActivityContent(''); setTempActivityType('과제'); setIsEditingActivity(false); }}>취소</button>
+              </div>
+            </div>
+          ) : (
+            <div className="activity-view-mode">
+              <div className="activity-text">
+                {activeActivity ? (<><span className={`badge ${activeActivity.type === '과제' ? 'badge-success' : 'badge-primary'}`}>{activeActivity.type || '수행평가'}</span><span className="activity-label" style={{ marginLeft: '0.5rem' }}>{selectedAssignment ? '선택한 과제:' : '활동 내용:'}</span><span className="activity-value">{activeActivity.title}</span></>) : (<span className="activity-value">현재 등록된 활동이 없습니다. 새로 추가해 주세요.</span>)}
+              </div>
+              {isAdmin && <button className="activity-btn edit" onClick={() => { setTempActivityContent(''); setTempActivityType('과제'); setIsEditingActivity(true); }}>추가</button>}
+            </div>
+          )}
+        </div>
+        <div className="activity-students-grid">
+          {students.map(student => {
+            const isCompleted = !!activeActivity?.submissions?.[student.id];
+            return (<div key={student.id} className={`activity-student-card ${isCompleted ? 'completed' : ''}`} onPointerDown={() => handlePointerDown(student.id)} onPointerUp={() => handlePointerUp(student.id)} onPointerLeave={handlePointerLeave} onContextMenu={(e) => e.preventDefault()}><div className="student-number">{student.number}</div><div className="student-name">{student.name}</div>{isCompleted && <div className="completed-check">✓</div>}</div>);
+          })}
+        </div>
+      </div>
+
+      <h3 className="section-title"><span>📝</span> 과제/수행평가 현황</h3>
+      <div className="assignment-list">
+        {displayAssignments.length > 0 ? displayAssignments.map(a => {
+          const total = a.total || students.length;
+          const submittedCount = typeof a.submitted === 'number' ? a.submitted : Object.keys(a.submissions || {}).length;
+          const pct = Math.round((submittedCount / total) * 100);
+          const remaining = total - submittedCount;
+          return (
+            <div key={a.id} className="assignment-card clickable" onClick={() => setSelectedAssignment(selectedAssignment?.id === a.id ? null : a)} style={{ flexDirection: 'column', alignItems: 'flex-start', outline: selectedAssignment?.id === a.id ? '2px solid var(--primary)' : 'none' }}>
+              <div style={{ display: 'flex', width: '100%', alignItems: 'center', gap: '1rem' }}>
+                <div className="assignment-icon" style={{ background: a.type === '수행평가' ? '#FFF4ED' : '#ECFDF5' }}>{a.type === '수행평가' ? '📋' : '📝'}</div>
+                <div className="assignment-details">
+                  <div className="assignment-title">{a.title}</div>
+                  <div className="assignment-info" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', width: '100%' }}>
+                    <span className={`badge ${a.type === '수행평가' ? 'badge-primary' : 'badge-success'}`}>{a.type}</span><span>{a.subject}</span><span>마감: {a.dueDate}</span>
+                    {remaining > 0 && <span style={{ color: 'var(--danger)' }}>미제출 {remaining}명</span>}
+                  </div>
+                </div>
+                <div className="assignment-progress-bar"><div className="progress-bar"><div className={`progress-fill ${pct >= 80 ? 'green' : pct >= 50 ? '' : 'red'}`} style={{ width: `${pct}%` }} /></div></div>
+                <div className="assignment-percentage">{pct}%</div>
+                {isAdmin && <button className="assignment-delete-btn" onClick={(e) => { e.stopPropagation(); if (confirm('이 항목을 정말 삭제하시겠습니까?')) { deleteAssignment(a.id); showToast('삭제되었습니다.', 'success'); } }}>🗑️</button>}
+              </div>
+              {selectedAssignment?.id === a.id && (
+                <div className="assignment-students-inline" style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-light)', width: '100%' }}>
+                  <div style={{ marginBottom: '0.5rem', fontWeight: 600, fontSize: '0.875rem', color: '#059669' }}>✅ 제출자</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>{students.filter(s => a.submissions?.[s.id]).map(s => (<button key={s.id} className="badge" style={{ border: 'none', background: '#D1FAE5', color: '#065F46', padding: '0.4rem 0.75rem', fontSize: '0.875rem', cursor: 'default' }}>{s.number}. {s.name}</button>))}{students.filter(s => a.submissions?.[s.id]).length === 0 && <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>제출자가 없습니다.</span>}</div>
+                  <div style={{ marginBottom: '0.5rem', fontWeight: 600, fontSize: '0.875rem', color: '#DC2626' }}>❌ 미제출자</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>{students.filter(s => !a.submissions?.[s.id]).map(s => (<button key={s.id} className="badge" style={{ border: 'none', background: '#FEE2E2', color: '#991B1B', padding: '0.4rem 0.75rem', fontSize: '0.875rem', cursor: 'default' }}>{s.number}. {s.name}</button>))}{students.filter(s => !a.submissions?.[s.id]).length === 0 && <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>미제출자가 없습니다.</span>}</div>
+                </div>
+              )}
+            </div>
+          );
+        }) : (<div className="empty-state" style={{ padding: '2rem', textAlign: 'center' }}><p style={{ color: 'var(--text-secondary)' }}>등록된 과제가 없습니다. 활동 완료 체크를 하면 자동으로 추가됩니다.</p></div>)}
+      </div>
+      {totalPages > 1 && (<div className="pagination" style={{ display: 'flex', justifyContent: 'center', gap: '0.5rem', marginTop: '1rem' }}><button className="btn btn-sm" disabled={currentPage === 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))}>이전</button><span style={{ fontSize: '0.875rem', fontWeight: 600, display: 'flex', alignItems: 'center' }}>{currentPage} / {totalPages}</span><button className="btn btn-sm" disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>다음</button></div>)}
+    </div>
+  );
+}
+
+/* ===================================================================
+   CalendarPage
+   =================================================================== */
+function CalendarPage() {
+  const { state } = useApp();
+  const { isAdmin, settings } = state;
+  const calendars = [settings?.calendarId1, settings?.calendarId2, settings?.calendarId3].filter(Boolean);
+
+  const getCombinedCalendarSrc = (cals) => {
+    if (cals.length === 0) return '';
+    let baseUrl = 'https://calendar.google.com/calendar/embed?ctz=Asia%2FSeoul&showPrint=0&showCalendars=0&showTz=0&mode=MONTH';
+    const colors = ['%23039BE5', '%23D50000', '%230B8043'];
+    cals.forEach((input, index) => {
+      const srcMatch = input.match(/src="([^"]+)"/);
+      let extracted = srcMatch ? srcMatch[1] : input.trim();
+      let calId = '';
+      if (extracted.includes('calendar.google.com') && extracted.includes('src=')) { const m = extracted.match(/src=([^&]+)/); if (m) calId = decodeURIComponent(m[1]); }
+      else calId = extracted;
+      if (calId) baseUrl += `&src=${encodeURIComponent(calId)}&color=${colors[index % colors.length]}`;
+    });
+    return baseUrl;
+  };
+
+  return (
+    <div className="calendar-page" style={{ height: '100%' }}>
+      {calendars.length > 0 ? (
+        <div className="card google-calendar-embed" style={{ height: '100%', padding: '0' }}><iframe src={getCombinedCalendarSrc(calendars)} width="100%" height="800" frameBorder="0" title="Google Calendar Combined" style={{ display: 'block', border: 'none' }}></iframe></div>
+      ) : (
+        <div className="card google-calendar-embed" style={{ padding: '3rem', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '800px' }}>
+          <h3>📅 구글 캘린더가 연동되지 않았습니다.</h3>
+          {isAdmin ? (<p style={{ color: 'var(--text-secondary)', marginTop: '0.5rem' }}>우측 상단의 ⚙️ 설정 메뉴에서 구글 캘린더 ID를 입력해주세요.</p>) : (<p style={{ color: 'var(--text-secondary)', marginTop: '0.5rem' }}>관리자가 캘린더를 연동하면 이 곳에 표시됩니다.</p>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ===================================================================
+   ToolsPage
+   =================================================================== */
+function ToolsPage() {
+  const { state, showToast, addPoll, deletePoll, votePoll } = useApp();
+  const { students, polls, isAdmin } = state;
+  const [pickerResult, setPickerResult] = useState('?');
+  const [pickerHistory, setPickerHistory] = useState([]);
+  const [isSpinning, setIsSpinning] = useState(false);
+  const [pickerCount, setPickerCount] = useState(1);
+  const spinRef = useRef(null);
+
+  const handlePick = useCallback(() => {
+    if (isSpinning) return;
+    const available = students.filter(s => !pickerHistory.find(h => h.id === s.id));
+    if (available.length === 0) { showToast('모든 학생이 이미 뽑혔습니다!', 'warning'); return; }
+    setIsSpinning(true);
+    let count = 0;
+    spinRef.current = setInterval(() => {
+      const rand = available[Math.floor(Math.random() * available.length)];
+      setPickerResult(rand.name);
+      count++;
+      if (count >= 20) {
+        clearInterval(spinRef.current);
+        const picks = shuffleArray(available).slice(0, Math.min(pickerCount, available.length));
+        setPickerResult(picks.map(p => p.name).join(', '));
+        setPickerHistory(prev => [...prev, ...picks]);
+        setIsSpinning(false);
+      }
+    }, 80);
+  }, [isSpinning, students, pickerHistory, pickerCount, showToast]);
+
+  const resetPicker = () => { setPickerHistory([]); setPickerResult('?'); };
+
+  const [timerMode, setTimerMode] = useState('timer');
+  const [timerSeconds, setTimerSeconds] = useState(300);
+  const [timerRunning, setTimerRunning] = useState(false);
+  const [timerElapsed, setTimerElapsed] = useState(0);
+  const [isAlarm, setIsAlarm] = useState(false);
+  const [customMin, setCustomMin] = useState('');
+  const [customSec, setCustomSec] = useState('');
+  const timerRef = useRef(null);
+  const presets = [{ label: '1분', sec: 60 }, { label: '3분', sec: 180 }, { label: '5분', sec: 300 }, { label: '10분', sec: 600 }, { label: '15분', sec: 900 }];
+  const formatTimer = (sec) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
+  const formatStopwatch = (ms) => { const totalSec = Math.floor(ms / 1000); return `${String(Math.floor(totalSec / 60)).padStart(2, '0')}:${String(totalSec % 60).padStart(2, '0')}.${String(Math.floor((ms % 1000) / 10)).padStart(2, '0')}`; };
+
+  const startTimer = () => {
+    if (timerRunning) return;
+    setIsAlarm(false); setTimerRunning(true);
+    if (timerMode === 'timer') {
+      timerRef.current = setInterval(() => { setTimerSeconds(prev => { if (prev <= 1) { clearInterval(timerRef.current); setTimerRunning(false); setIsAlarm(true); showToast('⏰ 시간 종료!', 'warning'); return 0; } return prev - 1; }); }, 1000);
+    } else {
+      const startTime = Date.now() - timerElapsed;
+      timerRef.current = setInterval(() => setTimerElapsed(Date.now() - startTime), 10);
+    }
+  };
+  const pauseTimer = () => { clearInterval(timerRef.current); setTimerRunning(false); };
+  const resetTimer = () => { clearInterval(timerRef.current); setTimerRunning(false); setTimerSeconds(300); setTimerElapsed(0); setIsAlarm(false); };
+  const applyCustomTime = () => {
+    const m = parseInt(customMin) || 0, s = parseInt(customSec) || 0;
+    if (m === 0 && s === 0) { showToast('시간을 입력해주세요', 'error'); return; }
+    setTimerSeconds(m * 60 + s); showToast(`${m}분 ${s}초로 설정되었습니다`, 'success');
+  };
+  useEffect(() => () => { clearInterval(timerRef.current); clearInterval(spinRef.current); }, []);
+
+  const [groupCount, setGroupCount] = useState(4);
+  const [groups, setGroups] = useState([]);
+  const makeGroups = () => {
+    const shuffled = shuffleArray(students);
+    const result = Array.from({ length: groupCount }, () => []);
+    shuffled.forEach((s, i) => result[i % groupCount].push(s));
+    setGroups(result); showToast(`${groupCount}개 팀이 편성되었습니다!`, 'success');
+  };
+
+  const [newPollQ, setNewPollQ] = useState('');
+  const [newPollOpts, setNewPollOpts] = useState(['', '']);
+  const getVotedPolls = () => { try { return JSON.parse(sessionStorage.getItem('votedPolls') || '{}'); } catch { return {}; } };
+  const markPollVoted = (pollId) => { const voted = getVotedPolls(); voted[pollId] = true; sessionStorage.setItem('votedPolls', JSON.stringify(voted)); };
+  const hasVoted = (pollId) => !!getVotedPolls()[pollId];
+
+  const handleAddPoll = () => {
+    if (!newPollQ.trim() || newPollOpts.filter(o => o.trim()).length < 2) { showToast('질문과 최소 2개 항목을 입력하세요', 'error'); return; }
+    const opts = newPollOpts.filter(o => o.trim());
+    addPoll({ id: generateUUID(), question: newPollQ, options: opts, votes: opts.map(() => 0), isActive: true });
+    setNewPollQ(''); setNewPollOpts(['', '']); showToast('투표가 생성되었습니다!', 'success');
+  };
+  const handleVote = (pollId, optIdx) => {
+    if (hasVoted(pollId)) { showToast('이미 투표하셨습니다!', 'warning'); return; }
+    votePoll(pollId, optIdx); markPollVoted(pollId); showToast('투표가 완료되었습니다!', 'success');
+  };
+  const handleDeletePoll = (pollId) => { deletePoll(pollId); showToast('투표가 삭제되었습니다.', 'success'); };
+
+  return (
+    <div className="tools-page">
+      <div className="tools-grid">
+        <div className={`tool-card ${!isAdmin ? 'disabled-tool' : ''}`}>
+          <div className="tool-card-header"><span className="tool-emoji">🎲</span><div><div className="tool-title">랜덤 뽑기</div><div className="tool-desc">발표자를 랜덤으로 선택해요</div></div></div>
+          <div className="picker-container">
+            <div className="roulette-wheel"><div className="roulette-pointer" /><div className={`roulette-circle ${isSpinning ? 'spinning' : pickerResult !== '?' ? 'reveal' : ''}`}><div className="roulette-result">{pickerResult}</div></div></div>
+            {isAdmin && (<div className="picker-count"><label>뽑을 인원:</label><input type="number" min="1" max="28" value={pickerCount} onChange={e => setPickerCount(Math.max(1, parseInt(e.target.value) || 1))} /><span>명</span></div>)}
+            {isAdmin && (<div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}><button className="btn btn-primary btn-lg" onClick={handlePick} disabled={isSpinning}>{isSpinning ? '🎰 뽑는 중...' : '🎲 뽑기!'}</button><button className="btn btn-secondary" onClick={resetPicker}>초기화</button></div>)}
+            {pickerHistory.length > 0 && (<div className="picker-history">{pickerHistory.map((s, i) => <span key={i} className="picked-badge">{s.name}</span>)}</div>)}
+          </div>
+        </div>
+
+        <div className={`tool-card ${!isAdmin ? 'disabled-tool' : ''}`}>
+          <div className="tool-card-header"><span className="tool-emoji">⏱️</span><div><div className="tool-title">타이머 / 스톱워치</div><div className="tool-desc">활동 시간을 관리해요</div></div></div>
+          <div className="timer-container">
+            <div className="timer-mode-toggle"><button className={`timer-mode-btn ${timerMode === 'timer' ? 'active' : ''}`} onClick={() => { resetTimer(); setTimerMode('timer'); }}>⏳ 타이머</button><button className={`timer-mode-btn ${timerMode === 'stopwatch' ? 'active' : ''}`} onClick={() => { resetTimer(); setTimerMode('stopwatch'); }}>⏱️ 스톱워치</button></div>
+            <div className={`timer-display ${timerRunning ? 'running' : ''} ${isAlarm ? 'alarm' : ''}`}>{timerMode === 'timer' ? formatTimer(timerSeconds) : formatStopwatch(timerElapsed)}</div>
+            {timerMode === 'timer' && (<>
+              <div className="timer-presets">{presets.map(p => (<button key={p.sec} className={`timer-preset ${timerSeconds === p.sec && !timerRunning ? 'active' : ''}`} onClick={() => { if (!timerRunning) setTimerSeconds(p.sec); }}>{p.label}</button>))}</div>
+              {!timerRunning && (<div className="timer-custom-input"><input type="number" className="custom-time-input" placeholder="분" min="0" max="99" value={customMin} onChange={e => setCustomMin(e.target.value)} /><span className="time-separator">:</span><input type="number" className="custom-time-input" placeholder="초" min="0" max="59" value={customSec} onChange={e => setCustomSec(e.target.value)} /><button className="btn btn-sm btn-primary" onClick={applyCustomTime}>적용</button></div>)}
+            </>)}
+            <div className="timer-controls">{!timerRunning ? <button className="btn btn-primary" onClick={startTimer}>▶ 시작</button> : <button className="btn btn-secondary" onClick={pauseTimer}>⏸ 일시정지</button>}<button className="btn btn-danger" onClick={resetTimer} style={{ background: 'var(--danger)', color: 'white' }}>↺ 초기화</button></div>
+          </div>
+        </div>
+
+        <div className={`tool-card ${!isAdmin ? 'disabled-tool' : ''}`}>
+          <div className="tool-card-header"><span className="tool-emoji">👥</span><div><div className="tool-title">팀 편성</div><div className="tool-desc">랜덤으로 팀을 나눠요</div></div></div>
+          <div className="group-maker">
+            {isAdmin && (<div className="group-settings"><div className="group-setting"><label>팀 수:</label><input type="number" min="2" max="14" value={groupCount} onChange={e => setGroupCount(Math.max(2, parseInt(e.target.value) || 2))} /><span>개</span></div><button className="btn btn-primary" onClick={makeGroups}>🔀 팀 편성하기</button></div>)}
+            {groups.length > 0 && (<div className="groups-result">{groups.map((g, i) => (<div key={i} className="group-card" style={{ animationDelay: `${i * 0.1}s` }}><div className="group-card-title">{i + 1}팀</div><div className="group-members">{g.map(s => (<div key={s.id} className="group-member"><span>{s.gender === 'M' ? '👦' : '👧'}</span><span>{s.number}. {s.name}</span></div>))}</div></div>))}</div>)}
+          </div>
+        </div>
+
+        <div className="tool-card">
+          <div className="tool-card-header"><span className="tool-emoji">📊</span><div><div className="tool-title">투표 / 설문</div><div className="tool-desc">학급 의견을 모아요</div></div></div>
+          <div className="poll-container">
+            {isAdmin && (
+              <div className="poll-form">
+                <input className="form-input" placeholder="투표 질문을 입력하세요" value={newPollQ} onChange={e => setNewPollQ(e.target.value)} style={{ marginBottom: '0.5rem' }} />
+                <div className="poll-options-list">{newPollOpts.map((opt, i) => (<div key={i} className="poll-option-input"><input className="form-input" placeholder={`항목 ${i + 1}`} value={opt} onChange={e => { const o = [...newPollOpts]; o[i] = e.target.value; setNewPollOpts(o); }} />{newPollOpts.length > 2 && <button className="poll-remove" onClick={() => setNewPollOpts(newPollOpts.filter((_, j) => j !== i))}>×</button>}</div>))}</div>
+                <div style={{ display: 'flex', gap: '0.5rem' }}><button className="btn btn-secondary btn-sm" onClick={() => setNewPollOpts([...newPollOpts, ''])}>+ 항목 추가</button><button className="btn btn-primary btn-sm" onClick={handleAddPoll}>투표 생성</button></div>
+              </div>
+            )}
+            {polls.map(p => {
+              const totalVotes = p.votes.reduce((a, b) => a + b, 0);
+              const voted = hasVoted(p.id);
+              return (
+                <div key={p.id} className="poll-active">
+                  <div className="poll-header-row"><h4 className="poll-question">{p.question}</h4>{isAdmin && <button className="poll-delete-btn" onClick={() => handleDeletePoll(p.id)}>🗑️</button>}</div>
+                  {voted && <div className="poll-voted-badge">✅ 투표 완료</div>}
+                  <div className="poll-results">{p.options.map((opt, i) => { const pct = totalVotes > 0 ? Math.round((p.votes[i] / totalVotes) * 100) : 0; return (<div key={i} className={`poll-result-item ${voted ? 'voted' : ''}`} onClick={() => !voted && handleVote(p.id, i)} style={{ cursor: voted ? 'default' : 'pointer' }}><span className="poll-result-label">{opt}</span><div className="poll-result-bar"><div className="poll-result-fill" style={{ width: `${pct}%` }}>{pct > 10 ? `${pct}%` : ''}</div></div><span className="poll-result-count">{p.votes[i]}표</span></div>); })}</div>
+                  <div className="poll-total">총 {totalVotes}표</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ===================================================================
+   WeeklyPlanPage
+   =================================================================== */
+const WEEK_DAYS = ['월', '화', '수', '목', '금'];
+const WEEK_PERIODS = [1, 2, 3, 4, 5, 6];
+
+function WeeklyPlanPage() {
+  const { state, showToast, saveWeeklyPlan } = useApp();
+  const { weeklyPlans, isAdmin } = state;
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [editing, setEditing] = useState(null);
+  const [editSubject, setEditSubject] = useState('');
+  const [editContent, setEditContent] = useState('');
+
+  const weekStart = useMemo(() => getWeekStart(currentDate), [currentDate]);
+  const weekKey = toISODate(weekStart);
+  const dayDates = useMemo(() => WEEK_DAYS.map((d, i) => { const date = new Date(weekStart); date.setDate(date.getDate() + i); return { day: d, dateStr: `${date.getMonth() + 1}/${date.getDate()}`, isoDate: toISODate(date) }; }), [weekStart]);
+  const weekEndDate = new Date(weekStart); weekEndDate.setDate(weekEndDate.getDate() + 4);
+  const currentWeekPlans = weeklyPlans[weekKey] || {};
+  const todayStr = toISODate(new Date());
+  const isCurrentWeek = dayDates.some(dd => dd.isoDate === todayStr);
+
+  const goToPrevWeek = () => { const d = new Date(currentDate); d.setDate(d.getDate() - 7); setCurrentDate(d); setEditing(null); };
+  const goToNextWeek = () => { const d = new Date(currentDate); d.setDate(d.getDate() + 7); setCurrentDate(d); setEditing(null); };
+  const goToToday = () => { setCurrentDate(new Date()); setEditing(null); };
+  const handleEdit = (day, period, subject, content) => { if (!isAdmin) return; setEditing({ day, period }); setEditSubject(subject || ''); setEditContent(content || ''); };
+  const handleSave = useCallback(() => { saveWeeklyPlan(weekKey, editing.day, editing.period, editSubject, editContent); setEditing(null); showToast('주간 일정이 저장되었습니다.', 'success'); }, [saveWeeklyPlan, weekKey, editing, editSubject, editContent, showToast]);
+
+  return (
+    <div className="weekly-page">
+      <div className="weekly-header">
+        <h2 className="section-title">📅 주간 교육일정</h2>
+        <div className="weekly-nav">
+          <button className="week-nav-btn" onClick={goToPrevWeek}>◀ 이전 주</button>
+          {!isCurrentWeek && <button className="week-nav-btn today-btn" onClick={goToToday}>오늘</button>}
+          <span className="weekly-date">{weekStart.getMonth() + 1}/{weekStart.getDate()} ~ {weekEndDate.getMonth() + 1}/{weekEndDate.getDate()}</span>
+          <button className="week-nav-btn" onClick={goToNextWeek}>다음 주 ▶</button>
+        </div>
+      </div>
+      {isAdmin && <p className="weekly-tip">💡 빈 칸을 클릭하면 내용을 수정할 수 있습니다.</p>}
+      <div className="weekly-table-wrapper card">
+        <table className="weekly-table">
+          <thead><tr><th className="period-col">교시</th>{dayDates.map(dd => (<th key={dd.day} className={dd.isoDate === todayStr ? 'today-col' : ''}><div className="day-header"><span className="day-name">{dd.day}요일</span><span className="day-date">{dd.dateStr}</span></div></th>))}</tr></thead>
+          <tbody>
+            {WEEK_PERIODS.map(p => (
+              <tr key={p}>
+                <td className="period-cell">{p}</td>
+                {dayDates.map(dd => {
+                  const plan = currentWeekPlans[dd.day]?.[p] || {};
+                  const isEditing = editing?.day === dd.day && editing?.period === p;
+                  const isToday = dd.isoDate === todayStr;
+                  return (
+                    <td key={dd.day} className={`plan-cell ${isAdmin ? 'editable' : ''} ${isEditing ? 'is-editing' : ''} ${isToday ? 'today-cell' : ''}`} onClick={() => !isEditing && handleEdit(dd.day, p, plan.subject, plan.content)}>
+                      {isEditing ? (
+                        <div className="plan-edit-form" onClick={e => e.stopPropagation()}>
+                          <input className="form-input plan-subject-input" placeholder="과목 (예: 국어)" value={editSubject} onChange={e => setEditSubject(e.target.value)} autoFocus />
+                          <input className="form-input plan-content-input" placeholder="학습 내용 입력..." value={editContent} onChange={e => setEditContent(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSave()} />
+                          <div className="plan-edit-actions"><button className="btn btn-sm btn-primary" onClick={handleSave}>저장</button><button className="btn btn-sm btn-secondary" onClick={() => setEditing(null)}>취소</button></div>
+                        </div>
+                      ) : (
+                        <div className="plan-display">{plan.subject && <div className="plan-subject">{plan.subject}</div>}{plan.content && <div className="plan-content">{plan.content}</div>}{!plan.subject && !plan.content && <div className="plan-empty">-</div>}</div>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ===================================================================
+   LinksPage
+   =================================================================== */
+function LinksPage() {
+  const { state, showToast, addLink, updateLink, deleteLink } = useApp();
+  const { quickLinks, isAdmin } = state;
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [formData, setFormData] = useState({ title: '', url: '', icon: '🔗', desc: '' });
+
+  const handleEdit = (link) => { setEditingId(link.id); setFormData(link); setShowForm(true); };
+  const handleDelete = (id) => { if (confirm('정말 삭제하시겠습니까?')) { deleteLink(id); showToast('삭제되었습니다.', 'success'); } };
+  const handleSave = () => {
+    if (!formData.title || !formData.url) { showToast('이름과 주소를 모두 입력해주세요.', 'error'); return; }
+    const url = formData.url.startsWith('http') ? formData.url : `https://${formData.url}`;
+    if (editingId) { updateLink({ ...formData, url, id: editingId }); showToast('수정되었습니다.', 'success'); }
+    else { addLink({ ...formData, url, id: generateUUID() }); showToast('추가되었습니다.', 'success'); }
+    setShowForm(false); setEditingId(null); setFormData({ title: '', url: '', icon: '🔗', desc: '' });
+  };
+  const handleCancel = () => { setShowForm(false); setEditingId(null); setFormData({ title: '', url: '', icon: '🔗', desc: '' }); };
+
+  return (
+    <div className="links-page">
+      <div className="links-header"><h2 className="section-title">🔗 즐겨찾기 & 바로가기</h2>{isAdmin && <button className="btn btn-primary" onClick={() => setShowForm(true)} disabled={showForm}>+ 링크 추가</button>}</div>
+      {isAdmin && showForm && (
+        <div className="card links-form">
+          <h3 style={{ marginBottom: '1rem', fontSize: '1.125rem' }}>{editingId ? '링크 수정' : '새 링크 추가'}</h3>
+          <div className="form-row">
+            <div className="form-group" style={{ flex: 1 }}><label>아이콘 (이모지)</label><input className="form-input" value={formData.icon} onChange={e => setFormData({ ...formData, icon: e.target.value })} maxLength="2" /></div>
+            <div className="form-group" style={{ flex: 4 }}><label>이름</label><input className="form-input" placeholder="예: 구글 번역" value={formData.title} onChange={e => setFormData({ ...formData, title: e.target.value })} /></div>
+          </div>
+          <div className="form-group"><label>주소 (URL)</label><input className="form-input" placeholder="https://..." value={formData.url} onChange={e => setFormData({ ...formData, url: e.target.value })} /></div>
+          <div className="form-group"><label>설명 (선택)</label><input className="form-input" placeholder="어떤 사이트인지 설명..." value={formData.desc} onChange={e => setFormData({ ...formData, desc: e.target.value })} /></div>
+          <div className="form-actions"><button className="btn btn-secondary" onClick={handleCancel}>취소</button><button className="btn btn-primary" onClick={handleSave}>저장</button></div>
+        </div>
+      )}
+      <div className="links-grid">
+        {quickLinks.map(link => (
+          <div key={link.id} className="link-card-wrapper">
+            <a href={link.url} target="_blank" rel="noopener noreferrer" className="link-card card"><div className="link-icon">{link.icon}</div><div className="link-content"><h3 className="link-title">{link.title}</h3>{link.desc && <p className="link-desc">{link.desc}</p>}</div></a>
+            {isAdmin && (<div className="link-actions"><button className="btn-icon link-action-btn" onClick={() => handleEdit(link)}>✏️</button><button className="btn-icon link-action-btn" onClick={() => handleDelete(link.id)}>🗑️</button></div>)}
+          </div>
+        ))}
+        {quickLinks.length === 0 && (<div className="empty-state" style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>등록된 즐겨찾기가 없습니다.</div>)}
+      </div>
+    </div>
+  );
+}
+
+/* ===================================================================
+   Root
+   =================================================================== */
+const ROUTE_PAGES = { '/': DashboardPage, '/students': StudentsPage, '/weekly': WeeklyPlanPage, '/attendance': AttendancePage, '/learning': LearningPage, '/calendar': CalendarPage, '/tools': ToolsPage, '/links': LinksPage };
+
+function AppShell() {
+  const pathname = useHashRoute();
+  const Page = ROUTE_PAGES[pathname] || DashboardPage;
+  return (
+    <>
+      <Layout pathname={pathname}><Page /></Layout>
+      <Toast />
+    </>
+  );
+}
+
+function Root() {
+  return (<AppProvider><AppShell /></AppProvider>);
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<Root />);
