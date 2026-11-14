@@ -413,6 +413,9 @@ const ICON_PATHS = {
   menu: <path d="M4 7h16M4 12h16M4 17h16" />,
   chevron: <path d="M15 5l-7 7 7 7" />,
   cake: <path d="M4 21h16M5 21v-7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v7M5 16c1.5 1 3 1 4.5 0s3-1 4.5 0 3 1 4.5 0M12 12V8M12 5.5c.8-.6.8-1.6 0-2.5-.8.9-.8 1.9 0 2.5z" />,
+  search: <><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /></>,
+  minus: <path d="M5 12h14" />,
+  lock: <><rect x="5" y="11" width="14" height="9.5" rx="2" /><path d="M8.5 11V8a3.5 3.5 0 0 1 7 0v3" /></>,
   sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4" /></>,
 };
 function Icon({ name, size = 20 }) {
@@ -520,15 +523,21 @@ function AdminSettingsModal({ onClose }) {
    =================================================================== */
 const STUDENT_ALLOWED_PATHS = ['/', '/weekly', '/learning', '/calendar', '/tools', '/links', '/students'];
 const NAV_ITEMS = [
-  { path: '/', label: '대시보드', icon: <Icon name="dashboard" /> },
-  { path: '/weekly', label: '주간 일정', icon: <Icon name="weekly" /> },
-  { path: '/attendance', label: '출석 관리', icon: <Icon name="attendance" /> },
-  { path: '/learning', label: '학습 관리', icon: <Icon name="learning" /> },
-  { path: '/calendar', label: '일정 & 공지', icon: <Icon name="calendar" /> },
-  { path: '/tools', label: '학급 도구', icon: <Icon name="tools" /> },
-  { path: '/links', label: '바로가기', icon: <Icon name="links" /> },
-  { path: '/students', label: '학생 관리', icon: <Icon name="students" /> },
+  { path: '/', tone: 'carrot', label: '대시보드', icon: <Icon name="dashboard" /> },
+  { path: '/weekly', tone: 'apricot', label: '주간 일정', icon: <Icon name="weekly" /> },
+  { path: '/attendance', tone: 'tangerine', label: '출석 관리', icon: <Icon name="attendance" /> },
+  { path: '/learning', tone: 'cocoa', label: '학습 관리', icon: <Icon name="learning" /> },
+  { path: '/calendar', tone: 'coral', label: '일정 & 공지', icon: <Icon name="calendar" /> },
+  { path: '/tools', tone: 'carrot', label: '학급 도구', icon: <Icon name="tools" /> },
+  { path: '/links', tone: 'apricot', label: '바로가기', icon: <Icon name="links" /> },
+  { path: '/students', tone: 'tangerine', label: '학생 관리', icon: <Icon name="students" /> },
 ];
+const TONES = ['carrot', 'apricot', 'tangerine', 'cocoa', 'coral'];
+// 과목마다 늘 같은 색 (모르는 과목은 이름으로 골고루 나눔)
+const SUBJECT_TONES = { 국어: 'carrot', 수학: 'apricot', 과학: 'tangerine', 사회: 'cocoa', 영어: 'coral', 도덕: 'cocoa', 체육: 'tangerine', 음악: 'coral', 미술: 'carrot', 실과: 'tangerine', 창체: 'apricot' };
+const subjectTone = (name) => { const n = (name || '').trim(); if (!n) return undefined; const hit = Object.keys(SUBJECT_TONES).find(k => n.startsWith(k)); return hit ? SUBJECT_TONES[hit] : TONES[[...n].reduce((a, c) => a + c.charCodeAt(0), 0) % TONES.length]; };
+const teamTone = (group) => (group ? TONES[(group - 1) % TONES.length] : undefined);
+const WIDGET_TONES = { schedule: 'apricot', thermometer: 'carrot', lunch: 'cocoa', dday: 'coral', ranking: 'tangerine', notices: 'apricot' };
 const PAGE_TITLES = { '/': '대시보드', '/weekly': '주간 일정', '/attendance': '출석 관리', '/learning': '학습 관리', '/calendar': '일정 & 공지', '/tools': '학급 도구', '/links': '바로가기', '/students': '학생 관리' };
 const MOBILE_LABELS = { '/': '대시보드', '/weekly': '주간', '/attendance': '출석', '/learning': '학습', '/calendar': '일정', '/tools': '도구', '/links': '링크', '/students': '학생' };
 
@@ -546,6 +555,7 @@ function Layout({ pathname, children }) {
   const today = new Date();
   const isDashboard = pathname === '/';
   const pageTitle = PAGE_TITLES[pathname] || '대시보드';
+  const currentNav = NAV_ITEMS.find(n => n.path === pathname);
   const isReadOnlyPath = !isAdmin && !STUDENT_ALLOWED_PATHS.includes(pathname);
 
   return (
@@ -565,7 +575,7 @@ function Layout({ pathname, children }) {
             const isAllowed = isAdmin || STUDENT_ALLOWED_PATHS.includes(item.path);
             const isActive = pathname === item.path;
             return (
-              <a key={item.path} href={`#${item.path}`} aria-current={isActive ? 'page' : undefined} className={`nav-item ${isActive ? 'active' : ''} ${!isAllowed ? 'nav-disabled' : ''}`} onClick={() => setSidebarOpen(false)}>
+              <a key={item.path} href={`#${item.path}`} aria-current={isActive ? 'page' : undefined} data-tone={item.tone} className={`nav-item ${isActive ? 'active' : ''} ${!isAllowed ? 'nav-disabled' : ''}`} onClick={() => setSidebarOpen(false)}>
                 <span className="nav-icon">{item.icon}</span>
                 <span className="nav-label">{item.label}</span>
                 {!isAllowed && <span className="nav-lock">선생님</span>}
@@ -575,10 +585,11 @@ function Layout({ pathname, children }) {
         </nav>
       </aside>
 
-      <main className="main-content">
+      <main className="main-content" data-tone={currentNav?.tone}>
         <header className="page-header">
           <button type="button" className="menu-btn" aria-label="메뉴 열기" onClick={() => setSidebarOpen(true)}><Icon name="menu" /></button>
           <div className="header-content">
+            {!isDashboard && currentNav && <span className="page-icon" aria-hidden="true">{currentNav.icon}</span>}
             <div className="header-titles">
               {isDashboard
                 ? <h2 className="page-title">{formatDate(today, 'md')} {getDayName(today)}요일</h2>
@@ -602,7 +613,7 @@ function Layout({ pathname, children }) {
           const isAllowed = isAdmin || STUDENT_ALLOWED_PATHS.includes(item.path);
           const isActive = pathname === item.path;
           return (
-            <a key={item.path} href={`#${item.path}`} aria-current={isActive ? 'page' : undefined} className={`mobile-nav-item ${isActive ? 'active' : ''} ${!isAllowed ? 'nav-disabled' : ''}`}>
+            <a key={item.path} href={`#${item.path}`} aria-current={isActive ? 'page' : undefined} data-tone={item.tone} className={`mobile-nav-item ${isActive ? 'active' : ''} ${!isAllowed ? 'nav-disabled' : ''}`}>
               {item.icon}<span>{MOBILE_LABELS[item.path]}</span>
             </a>
           );
@@ -750,7 +761,7 @@ function DashboardGrid({ layout, editing, onChange, widgets }) {
           width: it.w * colW + (it.w - 1) * GRID_GAP, height: it.h * GRID_ROW_H + (it.h - 1) * GRID_GAP,
         };
         return (
-          <section key={it.id} className={`wcard ${w.className || ''} ${activeId === it.id ? 'is-active' : ''}`} style={style} aria-label={w.label}>
+          <section key={it.id} data-tone={WIDGET_TONES[it.id]} className={`wcard ${w.className || ''} ${activeId === it.id ? 'is-active' : ''}`} style={style} aria-label={w.label}>
             {w.content}
             {editing && !stacked && (
               <>
@@ -862,7 +873,7 @@ function DashboardPage() {
                 const status = nowMin > c.end ? 'done' : (currentClass === c ? 'now' : 'next');
                 const progress = status === 'now' ? Math.round(((nowMin - c.start) / (c.end - c.start)) * 100) : status === 'done' ? 100 : 0;
                 return (
-                  <li key={c.period} className={`period is-${status}`} aria-current={status === 'now' ? 'time' : undefined}>
+                  <li key={c.period} data-tone={subjectTone(c.subject)} className={`period is-${status}`} aria-current={status === 'now' ? 'time' : undefined}>
                     <span className="period-time">{c.period}교시 · {minToClock(c.start)}</span>
                     <span className="period-subject">{c.subject}</span>
                     {c.content && <span className="period-content">{c.content}</span>}
@@ -1023,6 +1034,7 @@ function StudentsPage() {
   const { state, dispatch, showToast, updatePoints, resetPoints, updateStudent, bulkUpdateStudents, addStudentRecord, deleteStudentRecord } = useApp();
   const { students, isAdmin, studentRecords, assignments, settings } = state;
   const [activeTab, setActiveTab] = useState('list');
+  useEffect(() => { if (!isAdmin) setActiveTab('list'); }, [isAdmin]); // 학생 화면으로 바꾸면 선생님 전용 탭을 닫음
   const [search, setSearch] = useState('');
   const [view, setView] = useState('card');
   const [pointsView, setPointsView] = useState('individual');
@@ -1071,11 +1083,11 @@ function StudentsPage() {
 
   const handleDragStartTeam = (e, student) => { if (!isAdmin) return; setDraggedGroupStudent(student); e.dataTransfer.effectAllowed = 'move'; e.target.style.opacity = '0.5'; };
   const handleDragEndTeam = (e) => { if (!isAdmin) return; e.target.style.opacity = '1'; setDraggedGroupStudent(null); };
-  const handleDragOverTeam = (e) => { if (!isAdmin) return; e.preventDefault(); e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = 'var(--primary-50)'; };
-  const handleDragLeaveTeam = (e) => { if (!isAdmin) return; e.currentTarget.style.borderColor = 'var(--glass-border)'; e.currentTarget.style.background = 'var(--bg-card)'; };
+  const handleDragOverTeam = (e) => { if (!isAdmin) return; e.preventDefault(); e.currentTarget.classList.add('is-over'); };
+  const handleDragLeaveTeam = (e) => { if (!isAdmin) return; e.currentTarget.classList.remove('is-over'); };
   const handleDropTeam = (e, targetGroupId) => {
     if (!isAdmin) return; e.preventDefault();
-    e.currentTarget.style.borderColor = 'var(--glass-border)'; e.currentTarget.style.background = 'var(--bg-card)';
+    e.currentTarget.classList.remove('is-over');
     if (!draggedGroupStudent || draggedGroupStudent.group === targetGroupId) return;
     updateStudent({ id: draggedGroupStudent.id, group: targetGroupId });
   };
@@ -1147,68 +1159,86 @@ function StudentsPage() {
 
   const records = selectedStudent ? (studentRecords[selectedStudent.id] || []) : [];
 
+  const TABS = [{ k: 'list', label: '학생 목록' }, { k: 'behavior', label: '행동발달', admin: true }, { k: 'evaluation', label: '학습평가', admin: true }];
+  const VIEWS = [{ v: 'card', label: '카드' }, { v: 'table', label: '표' }, { v: 'seating', label: '자리' }, { v: 'points', label: '칭찬' }];
+  const fmtBirthday = (b) => { const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(b || ''); return m ? `${+m[1]}월 ${+m[2]}일` : ''; };
+  const rankClass = (i) => (i === 0 ? 'is-first' : '');
+
   return (
-    <div className="students-page">
-      <div className="students-tabs">
-        <button className={`tab-btn ${activeTab === 'list' ? 'active' : ''}`} onClick={() => setActiveTab('list')}>👥 학생 목록</button>
-        <button className={`tab-btn ${activeTab === 'behavior' ? 'active' : ''} ${!isAdmin ? 'tab-locked' : ''}`} onClick={() => isAdmin ? setActiveTab('behavior') : showToast('관리자 전용 기능입니다.', 'error')}>🌱 행동발달 {!isAdmin && <span className="lock-icon">🔒</span>}</button>
-        <button className={`tab-btn ${activeTab === 'evaluation' ? 'active' : ''} ${!isAdmin ? 'tab-locked' : ''}`} onClick={() => isAdmin ? setActiveTab('evaluation') : showToast('관리자 전용 기능입니다.', 'error')}>📝 학습평가 {!isAdmin && <span className="lock-icon">🔒</span>}</button>
+    <div className="stu">
+      <div className="wk-top">
+        <div className="wk-title">
+          <h1 className="dash-headline">우리 반 <em>{students.length}명</em></h1>
+        </div>
+        <div className="mode-switch" role="group" aria-label="학생 관리 메뉴">
+          {TABS.map(t => {
+            const locked = t.admin && !isAdmin;
+            return <button key={t.k} type="button" aria-pressed={activeTab === t.k} aria-disabled={locked || undefined} className={locked ? 'is-locked' : ''} onClick={() => locked ? showToast('선생님 모드에서 볼 수 있어요.', 'error') : setActiveTab(t.k)}>{t.label}{locked && <Icon name="lock" size={14} />}</button>;
+          })}
+        </div>
       </div>
 
       {activeTab === 'list' && (
         <>
-          <div className="students-toolbar">
-            <div className="search-wrapper">
-              <span>🔍</span>
-              <input className="search-input" placeholder="학생 이름 또는 번호 검색..." value={search} onChange={e => setSearch(e.target.value)} />
+          <div className="stu-bar">
+            <label className="stu-search">
+              <Icon name="search" size={18} />
+              <span className="sr-only">학생 검색</span>
+              <input type="search" placeholder="이름이나 번호로 찾기" value={search} onChange={e => setSearch(e.target.value)} />
+            </label>
+            <div className="mode-switch" role="group" aria-label="보기 방식">
+              {VIEWS.map(b => <button key={b.v} type="button" aria-pressed={view === b.v} onClick={() => setView(b.v)}>{b.label}</button>)}
             </div>
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              {isAdmin && (
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                  <button className="btn-admin-action btn-admin-outline" onClick={downloadStudentTemplate}>📥 양식 다운로드</button>
-                  <label className="btn-admin-action btn-admin-excel" style={{ cursor: 'pointer', margin: 0 }}>📤 엑셀 업로드<input type="file" accept=".xlsx, .xls" style={{ display: 'none' }} onChange={handleExcelUpload} /></label>
-                  <button className="btn-admin-action btn-admin-primary" onClick={() => { const existingNames = students.map(s => `${s.name}\t${s.gender || ''}\t${s.birthday || ''}`).join('\n'); setBulkNames(existingNames); setShowBulkModal(true); }}>📝 일괄 수정</button>
-                </div>
-              )}
-              <div className="view-toggle">
-                {[{ v: 'card', icon: '▦' }, { v: 'table', icon: '☰' }, { v: 'seating', icon: '⊞' }, { v: 'points', icon: '⭐' }].map(b => (
-                  <button key={b.v} className={`view-toggle-btn ${view === b.v ? 'active' : ''}`} onClick={() => setView(b.v)}>{b.icon}</button>
-                ))}
+            {isAdmin && (
+              <div className="stu-admin">
+                <button type="button" className="btn btn-secondary btn-sm" onClick={downloadStudentTemplate}>양식 받기</button>
+                <label className="btn btn-secondary btn-sm stu-upload">엑셀 올리기<input type="file" accept=".xlsx, .xls" className="sr-only" onChange={handleExcelUpload} /></label>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => { const existingNames = students.map(s => `${s.name}\t${s.gender || ''}\t${s.birthday || ''}`).join('\n'); setBulkNames(existingNames); setShowBulkModal(true); }}>명단 한 번에 고치기</button>
               </div>
-            </div>
+            )}
           </div>
 
           {view === 'card' && (
-            <div className="students-grid">
-              {filtered.map(s => (
-                <div key={s.id} className="student-card" onClick={() => handleSelectStudent(s)}>
-                  <div className="student-card-header">
-                    <div className={`avatar ${getAvatarColor(s.gender)}`}>{getInitials(s.name)}</div>
-                    <div><div className="student-number">{s.number}번</div><div className="student-name-main">{s.name}</div></div>
-                  </div>
-                  <div className="student-card-body">
-                    <div className="student-meta"><span>{s.gender === 'M' ? '👦' : '👧'} {s.birthday?.slice(5) || ''}</span></div>
-                    {s.allergies && <div className="student-meta allergy">⚠️ {s.allergies}</div>}
-                    {s.healthNotes && <div className="student-meta">🏥 {s.healthNotes}</div>}
-                  </div>
-                  <div className="student-card-footer">
-                    <span className="student-points">⭐ {s.points}점</span>
-                    {isAdmin && (<div className="student-actions"><button className="point-add plus" onClick={e => { e.stopPropagation(); handleAddPoints(s.id, s.points, 1); }}>+</button><button className="point-add minus" onClick={e => { e.stopPropagation(); handleAddPoints(s.id, s.points, -1); }}>-</button></div>)}
-                  </div>
-                </div>
-              ))}
-            </div>
+            filtered.length ? (
+              <ul className="stu-grid">
+                {filtered.map(s => (
+                  <li key={s.id} className="stu-card" data-tone={teamTone(s.group)}>
+                    <button type="button" className="stu-card-main" onClick={() => handleSelectStudent(s)}>
+                      <span className="stu-card-top"><span className="att-no num">{s.number}</span><span className="stu-name">{s.name}</span></span>
+                      <span className="stu-meta">{[s.group && `${s.group}팀`, s.gender === 'F' ? '여' : '남', fmtBirthday(s.birthday)].filter(Boolean).join(' · ')}</span>
+                      {(s.allergies || s.healthNotes) && (
+                        <span className="stu-tags">
+                          {s.allergies && <span className="stu-tag is-warn">알레르기 {s.allergies}</span>}
+                          {s.healthNotes && <span className="stu-tag">{s.healthNotes}</span>}
+                        </span>
+                      )}
+                    </button>
+                    <div className="stu-card-foot">
+                      <span className="stu-points"><strong className="num">{s.points || 0}</strong>점</span>
+                      {isAdmin && (
+                        <span className="stu-steppers">
+                          <button type="button" className="icon-ghost" aria-label={`${s.name} 1점 빼기`} onClick={() => handleAddPoints(s.id, s.points, -1)}><Icon name="minus" size={16} /></button>
+                          <button type="button" className="icon-ghost is-plus" aria-label={`${s.name} 1점 더하기`} onClick={() => handleAddPoints(s.id, s.points, 1)}><Icon name="plus" size={16} /></button>
+                        </span>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : <div className="wcard wcard-empty stu-empty">{search ? `“${search}”에 맞는 학생이 없어요.` : '아직 학생이 없어요. 엑셀로 명단을 올려 주세요.'}</div>
           )}
 
           {view === 'table' && (
-            <div className="table-container">
-              <table>
-                <thead><tr><th>번호</th><th>이름</th><th>성별</th><th>생일</th><th>알레르기</th><th>건강</th><th>포인트</th></tr></thead>
+            <div className="wk-card">
+              <table className="stu-table">
+                <thead><tr><th className="stu-col-no">번호</th><th>이름</th><th>성별</th><th>생일</th><th>알레르기</th><th>건강</th><th className="stu-col-num">포인트</th></tr></thead>
                 <tbody>
                   {filtered.map(s => (
-                    <tr key={s.id} onClick={() => handleSelectStudent(s)} style={{ cursor: 'pointer' }}>
-                      <td>{s.number}</td><td><div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div className={`avatar sm ${getAvatarColor(s.gender)}`}>{getInitials(s.name)}</div>{s.name}</div></td>
-                      <td>{s.gender === 'M' ? '남' : '여'}</td><td>{s.birthday?.slice(5) || '-'}</td><td>{s.allergies || '-'}</td><td>{s.healthNotes || '-'}</td><td><span className="student-points">⭐ {s.points}</span></td>
+                    <tr key={s.id} tabIndex={0} onClick={() => handleSelectStudent(s)} onKeyDown={e => e.key === 'Enter' && handleSelectStudent(s)}>
+                      <td className="stu-col-no num">{s.number}</td><td className="stu-table-name">{s.name}</td>
+                      <td>{s.gender === 'F' ? '여' : '남'}</td><td>{fmtBirthday(s.birthday) || '—'}</td>
+                      <td className={s.allergies ? 'stu-warn' : 'stu-dim'}>{s.allergies || '—'}</td><td className={s.healthNotes ? '' : 'stu-dim'}>{s.healthNotes || '—'}</td>
+                      <td className="stu-col-num num">{s.points || 0}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1217,146 +1247,154 @@ function StudentsPage() {
           )}
 
           {view === 'seating' && (
-            <div className="seating-container">
-              <div className="seating-header"><h3>📐 자리 배치도</h3>{isAdmin && <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginLeft: '1rem' }}>💡 이름표를 드래그 앤 드롭하여 자리를 바꿀 수 있습니다.</span>}</div>
-              <div className="seating-board">
+            <section className="wcard">
+              <div className="wcard-head"><h2 className="wcard-title">자리 배치도</h2>{isAdmin && <span className="wcard-meta">이름표를 끌어다 놓으면 자리가 바뀌어요</span>}</div>
+              <div className="wcard-body seating-container">
                 <div className="teacher-desk">교탁</div>
                 <div className="seating-grid-dynamic">
                   {seatingList.map((s) => (
                     <div key={s.id} className="seat occupied" draggable={isAdmin} onDragStart={(e) => handleDragStartSeat(e, s)} onDragEnd={handleDragEndSeat} onDragOver={handleDragOverSeat} onDrop={(e) => handleDropSeat(e, s)} onClick={() => handleSelectStudent(s)} style={{ cursor: isAdmin ? 'grab' : 'pointer' }}>
-                      <div className="seat-name">{s.name}</div><div className="seat-number">{s.number}번</div>
+                      <div className="seat-number num">{s.number}</div><div className="seat-name">{s.name}</div>
                     </div>
                   ))}
                 </div>
               </div>
-            </div>
+            </section>
           )}
 
           {view === 'points' && (
-            <div className="points-section">
-              <div className="points-header" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem', alignItems: 'center' }}>
-                <h3 style={{ margin: 0 }}>🏆 칭찬 포인트 랭킹</h3>
-                <div className="points-tabs" style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button className={`admin-btn ${pointsView === 'individual' ? 'active' : ''}`} style={pointsView === 'individual' ? { background: 'var(--primary)', color: 'white', borderColor: 'var(--primary)' } : {}} onClick={() => setPointsView('individual')}>개인별</button>
-                  <button className={`admin-btn ${pointsView === 'group' ? 'active' : ''}`} style={pointsView === 'group' ? { background: 'var(--primary)', color: 'white', borderColor: 'var(--primary)' } : {}} onClick={() => setPointsView('group')}>팀별</button>
+            <section className="wcard">
+              <div className="wcard-head">
+                <h2 className="wcard-title">칭찬 포인트 순위</h2>
+                <div className="mode-switch" role="group" aria-label="순위 기준">
+                  <button type="button" aria-pressed={pointsView === 'individual'} onClick={() => setPointsView('individual')}>개인별</button>
+                  <button type="button" aria-pressed={pointsView === 'group'} onClick={() => setPointsView('group')}>팀별</button>
                 </div>
               </div>
-              {pointsView === 'individual' ? (
-                <div className="points-leaderboard">
-                  {sorted.map((s, i) => (
-                    <div key={s.id} className="points-row glass-card" style={{ background: 'var(--bg-card)', border: '1px solid var(--glass-border)', borderRadius: 'var(--radius-md)', padding: '0.75rem 1rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                      <div className={`points-rank ${i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : ''}`}>{i + 1}</div>
-                      <div className={`avatar sm ${getAvatarColor(s.gender)}`}>{getInitials(s.name)}</div>
-                      <div className="points-student-name" style={{ flex: 1, fontWeight: 600 }}>{s.name} <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginLeft: '0.5rem', fontWeight: 500 }}>{s.group}팀</span></div>
-                      <div className="points-score" style={{ fontWeight: 800, fontSize: '1.1rem', color: 'var(--primary)' }}>⭐ {s.points}</div>
-                      {isAdmin && (<div className="points-actions" style={{ display: 'flex', gap: '0.25rem' }}><button className="btn btn-primary" onClick={() => handleAddPoints(s.id, s.points, 5)}>+5점</button><button className="btn" style={{ background: 'var(--success)', color: 'white' }} onClick={() => handleAddPoints(s.id, s.points, 10)}>+10점</button><button className="btn btn-danger" onClick={() => handleAddPoints(s.id, s.points, -5)}>-5점</button></div>)}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="points-leaderboard group-leaderboard">
-                  <div style={{ marginBottom: '1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{isAdmin ? '💡 학생 이름표를 드래그하여 다른 팀으로 옮겨보세요.' : ''}</div>
-                  {groupPoints.map((g, i) => (
-                    <div key={g.groupId} className="points-row glass-card group-card-dnd" onDragOver={handleDragOverTeam} onDragLeave={handleDragLeaveTeam} onDrop={(e) => handleDropTeam(e, g.groupId)} style={{ background: 'var(--bg-card)', border: '2px solid var(--glass-border)', borderRadius: 'var(--radius-lg)', padding: '1.25rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'flex-start', gap: '1.5rem' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
-                        <div className={`points-rank ${i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : ''}`} style={{ fontSize: '1.2rem', width: '30px', height: '30px', textAlign: 'center' }}>{i + 1}</div>
-                        <div className="group-avatar" style={{ width: '40px', height: '40px', borderRadius: 'var(--radius-full)', background: 'var(--primary-50)', color: 'var(--primary-dark)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '1.2rem' }}>{g.groupId}</div>
-                        <div className="points-score" style={{ fontWeight: 800, fontSize: '1.1rem', color: 'var(--primary-dark)' }}>⭐ {g.totalPoints}</div>
-                      </div>
-                      <div className="points-student-name" style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 800, fontSize: '1.1rem', marginBottom: '0.75rem', color: 'var(--text-primary)' }}>{g.groupId}팀</div>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                          {g.students.map(s => (
-                            <div key={s.id} className="team-student-pill" draggable={isAdmin} onDragStart={(e) => handleDragStartTeam(e, s)} onDragEnd={handleDragEndTeam} style={{ padding: '0.4rem 0.75rem', background: 'var(--gray-50)', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-xl)', fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: isAdmin ? 'grab' : 'default' }}>
-                              <div className={`avatar sm ${getAvatarColor(s.gender)}`} style={{ width: '20px', height: '20px', fontSize: '0.6rem' }}>{getInitials(s.name)}</div>{s.name}
-                            </div>
-                          ))}
-                          {g.students.length === 0 && <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>편성된 학생이 없습니다. 드래그하여 추가하세요.</span>}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+              <div className="wcard-body">
+                {pointsView === 'individual' ? (
+                  <ol className="stu-rank">
+                    {sorted.map((s, i) => (
+                      <li key={s.id} className={rankClass(i)}>
+                        <span className="rank-no num">{i + 1}</span>
+                        <span className="stu-rank-name">{s.name}<span className="stu-team" data-tone={teamTone(s.group)}>{s.group}팀</span></span>
+                        <span className="stu-rank-score"><strong className="num">{s.points || 0}</strong>점</span>
+                        {isAdmin && (
+                          <span className="stu-rank-actions">
+                            <button type="button" className="chip-btn" onClick={() => handleAddPoints(s.id, s.points, 5)}>+5</button>
+                            <button type="button" className="chip-btn" onClick={() => handleAddPoints(s.id, s.points, 10)}>+10</button>
+                            <button type="button" className="chip-btn is-minus" onClick={() => handleAddPoints(s.id, s.points, -5)}>−5</button>
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <>
+                    {isAdmin && <p className="lrn-hint stu-hint">학생 이름표를 다른 팀으로 끌어다 놓으면 팀이 바뀌어요.</p>}
+                    <ol className="stu-teams">
+                      {groupPoints.map((g, i) => (
+                        <li key={g.groupId} data-tone={teamTone(g.groupId)} className={`stu-team-card ${rankClass(i)}`} onDragOver={handleDragOverTeam} onDragLeave={handleDragLeaveTeam} onDrop={(e) => handleDropTeam(e, g.groupId)}>
+                          <div className="stu-team-head">
+                            <span className="rank-no num">{i + 1}</span>
+                            <span className="stu-team-name">{g.groupId}팀</span>
+                            <span className="stu-rank-score"><strong className="num">{g.totalPoints}</strong>점</span>
+                          </div>
+                          <div className="stu-pills">
+                            {g.students.map(s => (<span key={s.id} className="stu-pill" draggable={isAdmin} onDragStart={(e) => handleDragStartTeam(e, s)} onDragEnd={handleDragEndTeam} style={{ cursor: isAdmin ? 'grab' : 'default' }}>{s.name}</span>))}
+                            {g.students.length === 0 && <span className="lrn-none">아직 아무도 없어요</span>}
+                          </div>
+                        </li>
+                      ))}
+                    </ol>
+                  </>
+                )}
+              </div>
+            </section>
           )}
         </>
       )}
 
       {activeTab === 'behavior' && (
-        <div className="behavior-tab">
-          <div className="behavior-grid" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-            {students.map(s => {
-              const recs = studentRecords[s.id] || [];
-              return (
-                <div key={s.id} className="behavior-student-card">
-                  <div style={{ width: '160px', flexShrink: 0, textAlign: 'center', borderRight: '1px solid var(--border-light)', paddingRight: '1rem', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                    <div className={`avatar xl ${getAvatarColor(s.gender)}`} style={{ margin: '0 auto 0.75rem auto' }}>{getInitials(s.name)}</div>
-                    <h3 style={{ margin: '0 0 0.5rem 0' }}>{s.number}. {s.name}</h3>
-                    {isAdmin && <button className="btn-ai-generate" onClick={() => handleGenerateAI(s)} disabled={generatingAiId === s.id}>{generatingAiId === s.id ? '⏳ 생성 중...' : '✨ AI 생성'}</button>}
-                    {isAdmin && <button className="btn btn-sm btn-secondary" onClick={() => handleSelectStudent(s)} style={{ marginTop: '0.5rem', width: '100%', fontWeight: 700 }}>➕ 기록 추가</button>}
-                  </div>
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                    <h4 style={{ marginBottom: '0.5rem', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}><span>📝 누적 기록</span><span className="badge">{recs.length}건</span></h4>
-                    <div className="behavior-record-box">
-                      {recs.length > 0 ? (
-                        <ul style={{ paddingLeft: '1.25rem', margin: 0, fontSize: '0.875rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                          {recs.map((r, i) => (<li key={i}><strong style={{ color: 'var(--primary)' }}>[{r.date}]</strong> {r.content}{isAdmin && <button style={{ background: 'transparent', border: 'none', color: '#DC2626', fontSize: '0.75rem', cursor: 'pointer', marginLeft: '0.5rem', fontWeight: 600 }} onClick={() => { if (confirm('이 기록을 삭제하시겠습니까?')) deleteStudentRecord(s.id, r.id); }}>🗑️</button>}</li>))}
-                        </ul>
-                      ) : (<div className="empty-state" style={{ minHeight: '100px', padding: 0 }}>기록이 없습니다.</div>)}
+        <ul className="stu-behavior">
+          {students.map(s => {
+            const recs = studentRecords[s.id] || [];
+            return (
+              <li key={s.id} className="wcard stu-bh">
+                <div className="stu-bh-who">
+                  <span className="stu-card-top"><span className="att-no num">{s.number}</span><span className="stu-name">{s.name}</span></span>
+                  {isAdmin && (
+                    <div className="stu-bh-actions">
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => handleSelectStudent(s)}><Icon name="plus" size={16} /> 기록 추가</button>
+                      <button type="button" className="btn btn-primary btn-sm" onClick={() => handleGenerateAI(s)} disabled={generatingAiId === s.id}>{generatingAiId === s.id ? 'AI가 쓰는 중…' : s.aiSummary ? 'AI 의견 다시 쓰기' : 'AI 의견 쓰기'}</button>
                     </div>
-                  </div>
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                    <h4 style={{ marginBottom: '0.5rem', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 800 }}>✨ 종합의견 (AI)</h4>
-                    <div className="behavior-ai-box">
-                      {s.aiSummary ? (<div style={{ whiteSpace: 'pre-wrap' }}>{s.aiSummary}</div>) : (<div className="empty-state" style={{ minHeight: '100px', padding: 0, opacity: 0.6, fontSize: '0.85rem' }}>AI 생성 버튼을 눌러 종합의견을 작성해보세요.</div>)}
-                    </div>
-                  </div>
+                  )}
                 </div>
-              );
-            })}
-          </div>
-        </div>
+                <div className="stu-bh-col">
+                  <h3 className="stu-bh-title">누적 기록 <span className="num">{recs.length}</span></h3>
+                  {recs.length > 0 ? (
+                    <ul className="stu-records">
+                      {recs.map((r, i) => (
+                        <li key={r.id || i}>
+                          <div className="stu-record-meta"><span className="num">{r.date}</span>{r.category && <span className="notice-tag">{r.category}</span>}</div>
+                          <p className="stu-record-text">{r.content}</p>
+                          {isAdmin && <button type="button" className="icon-ghost" aria-label="이 기록 삭제" onClick={() => { if (confirm('이 기록을 삭제하시겠습니까?')) deleteStudentRecord(s.id, r.id); }}><Icon name="trash" size={16} /></button>}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : <p className="stu-bh-empty">아직 기록이 없어요.</p>}
+                </div>
+                <div className="stu-bh-col">
+                  <h3 className="stu-bh-title">종합의견</h3>
+                  {s.aiSummary ? <p className="stu-summary">{s.aiSummary}</p> : <p className="stu-bh-empty">기록을 모은 뒤 “AI 의견 쓰기”를 누르면 초안이 생겨요.</p>}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
       )}
 
       {activeTab === 'evaluation' && (
-        <div className="evaluation-tab">
-          {assignments.length === 0 ? (<div className="empty-state"><p>등록된 과제 및 수행평가가 없습니다.</p></div>) : (
-            <div className="table-container" style={{ overflowX: 'auto', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
-              <table style={{ minWidth: '100%', whiteSpace: 'nowrap' }}>
-                <thead><tr><th style={{ position: 'sticky', left: 0, zIndex: 10, background: 'var(--gray-50)', minWidth: '120px' }}>학생 이름</th>
-                  {assignments.map(a => (<th key={a.id} style={{ minWidth: '160px', textAlign: 'center', padding: '1rem' }}>
-                    <div style={{ display: 'inline-block', padding: '0.2rem 0.5rem', background: a.type === '수행평가' ? '#FFF4ED' : '#ECFDF5', color: a.type === '수행평가' ? '#E8590C' : '#059669', borderRadius: '4px', fontSize: '0.75rem', marginBottom: '0.4rem' }}>{a.type}</div>
-                    <div style={{ fontSize: '0.9rem', color: 'var(--text-primary)', fontWeight: 700, marginBottom: '0.25rem', whiteSpace: 'normal', wordBreak: 'keep-all' }}>{a.title}</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{a.dueDate}</div>
-                    {isAdmin && <button style={{ background: 'transparent', border: 'none', color: '#DC2626', fontSize: '0.75rem', cursor: 'pointer', marginTop: '0.5rem', fontWeight: 600 }} onClick={() => { if (confirm('이 항목을 정말 삭제하시겠습니까?')) { dispatch({ type: 'DELETE_ASSIGNMENT', payload: a.id }); showToast('삭제되었습니다.', 'success'); } }}>🗑️ 삭제</button>}
-                  </th>))}
-                </tr></thead>
-                <tbody>
-                  {students.map(s => (
-                    <tr key={s.id}>
-                      <td style={{ position: 'sticky', left: 0, zIndex: 5, background: 'var(--bg-card)', fontWeight: 600, borderRight: '1px solid var(--border-light)' }}>{s.number}번 <span style={{ marginLeft: '0.25rem' }}>{s.name}</span></td>
-                      {assignments.map(a => {
-                        const submission = a.submissions?.[s.id];
-                        const grade = submission?.grade;
-                        return (
-                          <td key={`${s.id}-${a.id}`} style={{ textAlign: 'center', background: submission ? 'transparent' : '#FEF2F2' }}>
-                            {submission ? (isAdmin ? (
-                              <div style={{ display: 'flex', gap: '0.25rem', justifyContent: 'center' }}>
-                                {['상', '중', '하'].map(g => (<button key={g} className={`grade-btn ${grade === g ? 'active' : ''}`} style={{ padding: '4px 10px', borderRadius: '4px', border: '1px solid var(--border-light)', background: grade === g ? 'var(--primary)' : 'white', color: grade === g ? 'white' : 'var(--text-secondary)', cursor: 'pointer', fontWeight: 600, fontSize: '0.75rem' }} onClick={() => handleEvaluate(a.id, s.id, g)}>{g}</button>))}
-                              </div>
-                            ) : (<span style={{ display: 'inline-block', padding: '0.25rem 0.75rem', background: '#D1FAE5', color: '#065F46', borderRadius: '4px', fontWeight: 700, fontSize: '0.8rem' }}>{grade || '채점 대기'}</span>)
-                            ) : (<span style={{ color: '#DC2626', fontSize: '0.8rem', fontWeight: 600 }}>미제출</span>)}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+        assignments.length === 0 ? (<div className="wcard wcard-empty stu-empty">등록된 과제·수행평가가 없어요. 학습 관리에서 활동을 추가해 주세요.</div>) : (
+          <div className="wk-card">
+            <table className="stu-eval">
+              <thead><tr>
+                <th className="stu-eval-who">학생</th>
+                {assignments.map(a => (
+                  <th key={a.id}>
+                    <div className="stu-eval-head">
+                      <span className={`lrn-type ${a.type === '수행평가' ? 'is-eval' : ''}`}>{a.type}</span>
+                      {isAdmin && <button type="button" className="icon-ghost" aria-label={`${a.title} 삭제`} onClick={() => { if (confirm('이 항목을 정말 삭제하시겠습니까?')) { dispatch({ type: 'DELETE_ASSIGNMENT', payload: a.id }); showToast('삭제되었습니다.', 'success'); } }}><Icon name="trash" size={16} /></button>}
+                    </div>
+                    <div className="stu-eval-title">{a.title}</div>
+                    <div className="stu-eval-date num">{a.dueDate}</div>
+                  </th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {students.map(s => (
+                  <tr key={s.id}>
+                    <th scope="row" className="stu-eval-who"><span className="att-no num">{s.number}</span>{s.name}</th>
+                    {assignments.map(a => {
+                      const submission = a.submissions?.[s.id];
+                      const grade = submission?.grade;
+                      return (
+                        <td key={`${s.id}-${a.id}`} className={submission ? '' : 'is-missing'}>
+                          {submission ? (isAdmin ? (
+                            <div className="stu-grade" role="group" aria-label={`${s.name} ${a.title} 평가`}>
+                              {['상', '중', '하'].map(g => (<button key={g} type="button" aria-pressed={grade === g} onClick={() => handleEvaluate(a.id, s.id, g)}>{g}</button>))}
+                            </div>
+                          ) : (<span className={`stu-grade-chip ${grade ? '' : 'is-wait'}`}>{grade || '채점 전'}</span>)
+                          ) : (<span className="stu-missing">미제출</span>)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
       )}
 
       {selectedStudent && (
@@ -1377,7 +1415,7 @@ function StudentsPage() {
                     ) : (
                       <div className="name-display" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <h3>{selectedStudent.name}</h3>
-                        {isAdmin && <button className="edit-name-btn" onClick={() => { setEditNameValue(selectedStudent.name); setIsEditingName(true); }} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1.2rem' }}>✎</button>}
+                        {isAdmin && <button type="button" onClick={() => { setEditNameValue(selectedStudent.name); setIsEditingName(true); }} aria-label="이름 고치기" className="icon-ghost"><Icon name="edit" size={16} /></button>}
                       </div>
                     )}
                   </div>
@@ -1386,7 +1424,7 @@ function StudentsPage() {
               </div>
               {isAdmin && (
                 <div className="student-edit-section">
-                  <h4 style={{ fontSize: '0.875rem', fontWeight: 700, marginBottom: '0.75rem' }}>📝 정보 수정</h4>
+                  <h4 className="stu-modal-h">정보 수정</h4>
                   <div className="edit-fields-grid">
                     <div className="edit-field"><label>성별</label><select className="form-input" value={editGender} onChange={e => setEditGender(e.target.value)}><option value="M">남</option><option value="F">여</option></select></div>
                     <div className="edit-field"><label>생일</label><input type="date" className="form-input" value={editBirthday} onChange={e => setEditBirthday(e.target.value)} /></div>
@@ -1395,10 +1433,10 @@ function StudentsPage() {
                   </div>
                 </div>
               )}
-              <div style={{ marginBottom: '0.75rem' }}><strong style={{ fontSize: '0.875rem' }}>📞 학부모 연락처:</strong><span style={{ marginLeft: '0.5rem', fontSize: '0.875rem' }}>{selectedStudent.parentPhone || '미등록'}</span></div>
+              <p className="stu-modal-line"><span>학부모 연락처</span><strong className="num">{selectedStudent.parentPhone || '미등록'}</strong></p>
               {isAdmin && (
                 <div className="record-input-section">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}><h4 style={{ fontSize: '0.875rem', fontWeight: 700, margin: 0 }}>📋 관찰/상담 기록 추가</h4></div>
+                  <h4 className="stu-modal-h">관찰·상담 기록 추가</h4>
                   <div className="record-input-row">
                     <select className="form-input" value={newRecordType} onChange={e => setNewRecordType(e.target.value)} style={{ width: 'auto', minWidth: '100px' }}><option value="observation">관찰</option><option value="counseling">상담</option></select>
                     <select className="form-input" value={newRecordCategory} onChange={e => setNewRecordCategory(e.target.value)} style={{ width: 'auto', minWidth: '80px' }}>{['생활', '학습', '교우', '건강', '기타'].map(c => <option key={c} value={c}>{c}</option>)}</select>
@@ -1411,12 +1449,12 @@ function StudentsPage() {
               )}
               {records.length > 0 && (
                 <div className="records-list-section">
-                  <h4 style={{ fontSize: '0.875rem', fontWeight: 700, marginBottom: '0.75rem' }}>📖 기록 목록 ({records.length}건)</h4>
+                  <h4 className="stu-modal-h">기록 <span className="num">{records.length}</span>건</h4>
                   <div className="counseling-list" style={{ marginTop: '0.5rem' }}>
                     {records.map((c, i) => (
                       <div key={c.id || i} className="counseling-item">
                         <div className="counseling-date">{c.date} · <span className={`record-type-badge ${c.type}`}>{c.type === 'observation' ? '관찰' : c.type === 'counseling' ? '상담' : c.type}</span> · {c.category}
-                          {isAdmin && <button style={{ background: 'transparent', border: 'none', color: '#DC2626', fontSize: '0.75rem', cursor: 'pointer', marginLeft: '0.5rem', fontWeight: 600 }} onClick={() => { if (confirm('이 기록을 삭제하시겠습니까?')) deleteStudentRecord(selectedStudent.id, c.id); }}>🗑️ 삭제</button>}
+                          {isAdmin && <button type="button" className="icon-ghost" aria-label="이 기록 삭제" onClick={() => { if (confirm('이 기록을 삭제하시겠습니까?')) deleteStudentRecord(selectedStudent.id, c.id); }}><Icon name="trash" size={16} /></button>}
                         </div>
                         <div className="counseling-content">{c.content}</div>
                       </div>
@@ -1432,7 +1470,7 @@ function StudentsPage() {
       {showBulkModal && (
         <div className="modal-overlay" onClick={() => setShowBulkModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '450px' }}>
-            <div className="modal-header"><h3 className="modal-title">📝 학생 이름 일괄 수정</h3><button className="modal-close" onClick={() => setShowBulkModal(false)}>&times;</button></div>
+            <div className="modal-header"><h3 className="modal-title">명단 한 번에 고치기</h3><button className="modal-close" onClick={() => setShowBulkModal(false)}>&times;</button></div>
             <div className="modal-body">
               <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>한 줄에 한 명씩 탭(Tab)이나 쉼표(,)로 구분하여 <strong>이름, 성별(M/F), 생일(YYYY-MM-DD)</strong>을 입력하세요.<br />(예: <code>김학생, M, 2014-05-01</code>)</p>
               <textarea className="form-input" value={bulkNames} onChange={e => setBulkNames(e.target.value)} rows="15" style={{ resize: 'vertical', fontFamily: 'monospace', lineHeight: '1.8' }} placeholder={'이름\t성별\t생일'} />
@@ -2063,11 +2101,11 @@ function WeeklyPlanPage() {
                 <div className="wk-form-actions"><button type="button" className="btn btn-sm btn-secondary" onClick={() => setEditing(null)}>취소</button><button type="button" className="btn btn-sm btn-primary" onClick={handleSave}>저장</button></div>
               </div>
             ) : isAdmin ? (
-              <button type="button" className={`wk-plan ${isEmpty ? 'is-empty' : ''}`} aria-label={`${dd.day}요일 ${p}교시 ${isEmpty ? '입력' : '수정'}`} onClick={() => handleEdit(dd.day, p, plan.subject, plan.content)}>
+              <button type="button" data-tone={subjectTone(plan.subject)} className={`wk-plan ${isEmpty ? 'is-empty' : ''}`} aria-label={`${dd.day}요일 ${p}교시 ${isEmpty ? '입력' : '수정'}`} onClick={() => handleEdit(dd.day, p, plan.subject, plan.content)}>
                 {isEmpty ? <span className="wk-add"><Icon name="plus" size={14} />입력</span> : <><span className="wk-subject">{plan.subject}</span>{plan.content && <span className="wk-content">{plan.content}</span>}</>}
               </button>
             ) : (
-              <div className={`wk-plan ${isEmpty ? 'is-empty' : ''}`}>{plan.subject && <span className="wk-subject">{plan.subject}</span>}{plan.content && <span className="wk-content">{plan.content}</span>}</div>
+              <div data-tone={subjectTone(plan.subject)} className={`wk-plan ${isEmpty ? 'is-empty' : ''}`}>{plan.subject && <span className="wk-subject">{plan.subject}</span>}{plan.content && <span className="wk-content">{plan.content}</span>}</div>
             )}
           </td>
         );

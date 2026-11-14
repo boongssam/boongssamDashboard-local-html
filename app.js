@@ -1025,6 +1025,25 @@ const ICON_PATHS = {
   cake: /*#__PURE__*/React.createElement("path", {
     d: "M4 21h16M5 21v-7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v7M5 16c1.5 1 3 1 4.5 0s3-1 4.5 0 3 1 4.5 0M12 12V8M12 5.5c.8-.6.8-1.6 0-2.5-.8.9-.8 1.9 0 2.5z"
   }),
+  search: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("circle", {
+    cx: "11",
+    cy: "11",
+    r: "6.5"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M16 16l4.5 4.5"
+  })),
+  minus: /*#__PURE__*/React.createElement("path", {
+    d: "M5 12h14"
+  }),
+  lock: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("rect", {
+    x: "5",
+    y: "11",
+    width: "14",
+    height: "9.5",
+    rx: "2"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M8.5 11V8a3.5 3.5 0 0 1 7 0v3"
+  })),
   sun: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("circle", {
     cx: "12",
     cy: "12",
@@ -1231,53 +1250,91 @@ function AdminSettingsModal({
 const STUDENT_ALLOWED_PATHS = ['/', '/weekly', '/learning', '/calendar', '/tools', '/links', '/students'];
 const NAV_ITEMS = [{
   path: '/',
+  tone: 'carrot',
   label: '대시보드',
   icon: /*#__PURE__*/React.createElement(Icon, {
     name: "dashboard"
   })
 }, {
   path: '/weekly',
+  tone: 'apricot',
   label: '주간 일정',
   icon: /*#__PURE__*/React.createElement(Icon, {
     name: "weekly"
   })
 }, {
   path: '/attendance',
+  tone: 'tangerine',
   label: '출석 관리',
   icon: /*#__PURE__*/React.createElement(Icon, {
     name: "attendance"
   })
 }, {
   path: '/learning',
+  tone: 'cocoa',
   label: '학습 관리',
   icon: /*#__PURE__*/React.createElement(Icon, {
     name: "learning"
   })
 }, {
   path: '/calendar',
+  tone: 'coral',
   label: '일정 & 공지',
   icon: /*#__PURE__*/React.createElement(Icon, {
     name: "calendar"
   })
 }, {
   path: '/tools',
+  tone: 'carrot',
   label: '학급 도구',
   icon: /*#__PURE__*/React.createElement(Icon, {
     name: "tools"
   })
 }, {
   path: '/links',
+  tone: 'apricot',
   label: '바로가기',
   icon: /*#__PURE__*/React.createElement(Icon, {
     name: "links"
   })
 }, {
   path: '/students',
+  tone: 'tangerine',
   label: '학생 관리',
   icon: /*#__PURE__*/React.createElement(Icon, {
     name: "students"
   })
 }];
+const TONES = ['carrot', 'apricot', 'tangerine', 'cocoa', 'coral'];
+// 과목마다 늘 같은 색 (모르는 과목은 이름으로 골고루 나눔)
+const SUBJECT_TONES = {
+  국어: 'carrot',
+  수학: 'apricot',
+  과학: 'tangerine',
+  사회: 'cocoa',
+  영어: 'coral',
+  도덕: 'cocoa',
+  체육: 'tangerine',
+  음악: 'coral',
+  미술: 'carrot',
+  실과: 'tangerine',
+  창체: 'apricot'
+};
+const subjectTone = name => {
+  const n = (name || '').trim();
+  if (!n) return undefined;
+  const hit = Object.keys(SUBJECT_TONES).find(k => n.startsWith(k));
+  return hit ? SUBJECT_TONES[hit] : TONES[[...n].reduce((a, c) => a + c.charCodeAt(0), 0) % TONES.length];
+};
+const teamTone = group => group ? TONES[(group - 1) % TONES.length] : undefined;
+const WIDGET_TONES = {
+  schedule: 'apricot',
+  thermometer: 'carrot',
+  lunch: 'cocoa',
+  dday: 'coral',
+  ranking: 'tangerine',
+  notices: 'apricot'
+};
 const PAGE_TITLES = {
   '/': '대시보드',
   '/weekly': '주간 일정',
@@ -1325,6 +1382,7 @@ function Layout({
   const today = new Date();
   const isDashboard = pathname === '/';
   const pageTitle = PAGE_TITLES[pathname] || '대시보드';
+  const currentNav = NAV_ITEMS.find(n => n.path === pathname);
   const isReadOnlyPath = !isAdmin && !STUDENT_ALLOWED_PATHS.includes(pathname);
   return /*#__PURE__*/React.createElement("div", {
     className: "app-layout"
@@ -1365,6 +1423,7 @@ function Layout({
       key: item.path,
       href: `#${item.path}`,
       "aria-current": isActive ? 'page' : undefined,
+      "data-tone": item.tone,
       className: `nav-item ${isActive ? 'active' : ''} ${!isAllowed ? 'nav-disabled' : ''}`,
       onClick: () => setSidebarOpen(false)
     }, /*#__PURE__*/React.createElement("span", {
@@ -1375,7 +1434,8 @@ function Layout({
       className: "nav-lock"
     }, "\uC120\uC0DD\uB2D8"));
   }))), /*#__PURE__*/React.createElement("main", {
-    className: "main-content"
+    className: "main-content",
+    "data-tone": currentNav?.tone
   }, /*#__PURE__*/React.createElement("header", {
     className: "page-header"
   }, /*#__PURE__*/React.createElement("button", {
@@ -1387,7 +1447,10 @@ function Layout({
     name: "menu"
   })), /*#__PURE__*/React.createElement("div", {
     className: "header-content"
-  }, /*#__PURE__*/React.createElement("div", {
+  }, !isDashboard && currentNav && /*#__PURE__*/React.createElement("span", {
+    className: "page-icon",
+    "aria-hidden": "true"
+  }, currentNav.icon), /*#__PURE__*/React.createElement("div", {
     className: "header-titles"
   }, isDashboard ? /*#__PURE__*/React.createElement("h2", {
     className: "page-title"
@@ -1433,6 +1496,7 @@ function Layout({
       key: item.path,
       href: `#${item.path}`,
       "aria-current": isActive ? 'page' : undefined,
+      "data-tone": item.tone,
       className: `mobile-nav-item ${isActive ? 'active' : ''} ${!isAllowed ? 'nav-disabled' : ''}`
     }, item.icon, /*#__PURE__*/React.createElement("span", null, MOBILE_LABELS[item.path]));
   })), showPinModal && /*#__PURE__*/React.createElement("div", {
@@ -1693,6 +1757,7 @@ function DashboardGrid({
     };
     return /*#__PURE__*/React.createElement("section", {
       key: it.id,
+      "data-tone": WIDGET_TONES[it.id],
       className: `wcard ${w.className || ''} ${activeId === it.id ? 'is-active' : ''}`,
       style: style,
       "aria-label": w.label
@@ -1926,6 +1991,7 @@ function DashboardPage() {
         const progress = status === 'now' ? Math.round((nowMin - c.start) / (c.end - c.start) * 100) : status === 'done' ? 100 : 0;
         return /*#__PURE__*/React.createElement("li", {
           key: c.period,
+          "data-tone": subjectTone(c.subject),
           className: `period is-${status}`,
           "aria-current": status === 'now' ? 'time' : undefined
         }, /*#__PURE__*/React.createElement("span", {
@@ -2259,6 +2325,9 @@ function StudentsPage() {
     settings
   } = state;
   const [activeTab, setActiveTab] = useState('list');
+  useEffect(() => {
+    if (!isAdmin) setActiveTab('list');
+  }, [isAdmin]); // 학생 화면으로 바꾸면 선생님 전용 탭을 닫음
   const [search, setSearch] = useState('');
   const [view, setView] = useState('card');
   const [pointsView, setPointsView] = useState('individual');
@@ -2340,19 +2409,16 @@ function StudentsPage() {
   const handleDragOverTeam = e => {
     if (!isAdmin) return;
     e.preventDefault();
-    e.currentTarget.style.borderColor = 'var(--primary)';
-    e.currentTarget.style.background = 'var(--primary-50)';
+    e.currentTarget.classList.add('is-over');
   };
   const handleDragLeaveTeam = e => {
     if (!isAdmin) return;
-    e.currentTarget.style.borderColor = 'var(--glass-border)';
-    e.currentTarget.style.background = 'var(--bg-card)';
+    e.currentTarget.classList.remove('is-over');
   };
   const handleDropTeam = (e, targetGroupId) => {
     if (!isAdmin) return;
     e.preventDefault();
-    e.currentTarget.style.borderColor = 'var(--glass-border)';
-    e.currentTarget.style.background = 'var(--bg-card)';
+    e.currentTarget.classList.remove('is-over');
     if (!draggedGroupStudent || draggedGroupStudent.group === targetGroupId) return;
     updateStudent({
       id: draggedGroupStudent.id,
@@ -2511,155 +2577,188 @@ function StudentsPage() {
     showToast('평가가 저장되었습니다.', 'success');
   };
   const records = selectedStudent ? studentRecords[selectedStudent.id] || [] : [];
+  const TABS = [{
+    k: 'list',
+    label: '학생 목록'
+  }, {
+    k: 'behavior',
+    label: '행동발달',
+    admin: true
+  }, {
+    k: 'evaluation',
+    label: '학습평가',
+    admin: true
+  }];
+  const VIEWS = [{
+    v: 'card',
+    label: '카드'
+  }, {
+    v: 'table',
+    label: '표'
+  }, {
+    v: 'seating',
+    label: '자리'
+  }, {
+    v: 'points',
+    label: '칭찬'
+  }];
+  const fmtBirthday = b => {
+    const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(b || '');
+    return m ? `${+m[1]}월 ${+m[2]}일` : '';
+  };
+  const rankClass = i => i === 0 ? 'is-first' : '';
   return /*#__PURE__*/React.createElement("div", {
-    className: "students-page"
+    className: "stu"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "students-tabs"
-  }, /*#__PURE__*/React.createElement("button", {
-    className: `tab-btn ${activeTab === 'list' ? 'active' : ''}`,
-    onClick: () => setActiveTab('list')
-  }, "\uD83D\uDC65 \uD559\uC0DD \uBAA9\uB85D"), /*#__PURE__*/React.createElement("button", {
-    className: `tab-btn ${activeTab === 'behavior' ? 'active' : ''} ${!isAdmin ? 'tab-locked' : ''}`,
-    onClick: () => isAdmin ? setActiveTab('behavior') : showToast('관리자 전용 기능입니다.', 'error')
-  }, "\uD83C\uDF31 \uD589\uB3D9\uBC1C\uB2EC ", !isAdmin && /*#__PURE__*/React.createElement("span", {
-    className: "lock-icon"
-  }, "\uD83D\uDD12")), /*#__PURE__*/React.createElement("button", {
-    className: `tab-btn ${activeTab === 'evaluation' ? 'active' : ''} ${!isAdmin ? 'tab-locked' : ''}`,
-    onClick: () => isAdmin ? setActiveTab('evaluation') : showToast('관리자 전용 기능입니다.', 'error')
-  }, "\uD83D\uDCDD \uD559\uC2B5\uD3C9\uAC00 ", !isAdmin && /*#__PURE__*/React.createElement("span", {
-    className: "lock-icon"
-  }, "\uD83D\uDD12"))), activeTab === 'list' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "students-toolbar"
+    className: "wk-top"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "search-wrapper"
-  }, /*#__PURE__*/React.createElement("span", null, "\uD83D\uDD0D"), /*#__PURE__*/React.createElement("input", {
-    className: "search-input",
-    placeholder: "\uD559\uC0DD \uC774\uB984 \uB610\uB294 \uBC88\uD638 \uAC80\uC0C9...",
+    className: "wk-title"
+  }, /*#__PURE__*/React.createElement("h1", {
+    className: "dash-headline"
+  }, "\uC6B0\uB9AC \uBC18 ", /*#__PURE__*/React.createElement("em", null, students.length, "\uBA85"))), /*#__PURE__*/React.createElement("div", {
+    className: "mode-switch",
+    role: "group",
+    "aria-label": "\uD559\uC0DD \uAD00\uB9AC \uBA54\uB274"
+  }, TABS.map(t => {
+    const locked = t.admin && !isAdmin;
+    return /*#__PURE__*/React.createElement("button", {
+      key: t.k,
+      type: "button",
+      "aria-pressed": activeTab === t.k,
+      "aria-disabled": locked || undefined,
+      className: locked ? 'is-locked' : '',
+      onClick: () => locked ? showToast('선생님 모드에서 볼 수 있어요.', 'error') : setActiveTab(t.k)
+    }, t.label, locked && /*#__PURE__*/React.createElement(Icon, {
+      name: "lock",
+      size: 14
+    }));
+  }))), activeTab === 'list' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "stu-bar"
+  }, /*#__PURE__*/React.createElement("label", {
+    className: "stu-search"
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "search",
+    size: 18
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "sr-only"
+  }, "\uD559\uC0DD \uAC80\uC0C9"), /*#__PURE__*/React.createElement("input", {
+    type: "search",
+    placeholder: "\uC774\uB984\uC774\uB098 \uBC88\uD638\uB85C \uCC3E\uAE30",
     value: search,
     onChange: e => setSearch(e.target.value)
   })), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: '0.5rem',
-      alignItems: 'center'
-    }
-  }, isAdmin && /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: '0.5rem',
-      alignItems: 'center'
-    }
+    className: "mode-switch",
+    role: "group",
+    "aria-label": "\uBCF4\uAE30 \uBC29\uC2DD"
+  }, VIEWS.map(b => /*#__PURE__*/React.createElement("button", {
+    key: b.v,
+    type: "button",
+    "aria-pressed": view === b.v,
+    onClick: () => setView(b.v)
+  }, b.label))), isAdmin && /*#__PURE__*/React.createElement("div", {
+    className: "stu-admin"
   }, /*#__PURE__*/React.createElement("button", {
-    className: "btn-admin-action btn-admin-outline",
+    type: "button",
+    className: "btn btn-secondary btn-sm",
     onClick: downloadStudentTemplate
-  }, "\uD83D\uDCE5 \uC591\uC2DD \uB2E4\uC6B4\uB85C\uB4DC"), /*#__PURE__*/React.createElement("label", {
-    className: "btn-admin-action btn-admin-excel",
-    style: {
-      cursor: 'pointer',
-      margin: 0
-    }
-  }, "\uD83D\uDCE4 \uC5D1\uC140 \uC5C5\uB85C\uB4DC", /*#__PURE__*/React.createElement("input", {
+  }, "\uC591\uC2DD \uBC1B\uAE30"), /*#__PURE__*/React.createElement("label", {
+    className: "btn btn-secondary btn-sm stu-upload"
+  }, "\uC5D1\uC140 \uC62C\uB9AC\uAE30", /*#__PURE__*/React.createElement("input", {
     type: "file",
     accept: ".xlsx, .xls",
-    style: {
-      display: 'none'
-    },
+    className: "sr-only",
     onChange: handleExcelUpload
   })), /*#__PURE__*/React.createElement("button", {
-    className: "btn-admin-action btn-admin-primary",
+    type: "button",
+    className: "btn btn-secondary btn-sm",
     onClick: () => {
       const existingNames = students.map(s => `${s.name}\t${s.gender || ''}\t${s.birthday || ''}`).join('\n');
       setBulkNames(existingNames);
       setShowBulkModal(true);
     }
-  }, "\uD83D\uDCDD \uC77C\uAD04 \uC218\uC815")), /*#__PURE__*/React.createElement("div", {
-    className: "view-toggle"
-  }, [{
-    v: 'card',
-    icon: '▦'
-  }, {
-    v: 'table',
-    icon: '☰'
-  }, {
-    v: 'seating',
-    icon: '⊞'
-  }, {
-    v: 'points',
-    icon: '⭐'
-  }].map(b => /*#__PURE__*/React.createElement("button", {
-    key: b.v,
-    className: `view-toggle-btn ${view === b.v ? 'active' : ''}`,
-    onClick: () => setView(b.v)
-  }, b.icon))))), view === 'card' && /*#__PURE__*/React.createElement("div", {
-    className: "students-grid"
-  }, filtered.map(s => /*#__PURE__*/React.createElement("div", {
+  }, "\uBA85\uB2E8 \uD55C \uBC88\uC5D0 \uACE0\uCE58\uAE30"))), view === 'card' && (filtered.length ? /*#__PURE__*/React.createElement("ul", {
+    className: "stu-grid"
+  }, filtered.map(s => /*#__PURE__*/React.createElement("li", {
     key: s.id,
-    className: "student-card",
-    onClick: () => handleSelectStudent(s)
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "student-card-header"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: `avatar ${getAvatarColor(s.gender)}`
-  }, getInitials(s.name)), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "student-number"
-  }, s.number, "\uBC88"), /*#__PURE__*/React.createElement("div", {
-    className: "student-name-main"
-  }, s.name))), /*#__PURE__*/React.createElement("div", {
-    className: "student-card-body"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "student-meta"
-  }, /*#__PURE__*/React.createElement("span", null, s.gender === 'M' ? '👦' : '👧', " ", s.birthday?.slice(5) || '')), s.allergies && /*#__PURE__*/React.createElement("div", {
-    className: "student-meta allergy"
-  }, "\u26A0\uFE0F ", s.allergies), s.healthNotes && /*#__PURE__*/React.createElement("div", {
-    className: "student-meta"
-  }, "\uD83C\uDFE5 ", s.healthNotes)), /*#__PURE__*/React.createElement("div", {
-    className: "student-card-footer"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "student-points"
-  }, "\u2B50 ", s.points, "\uC810"), isAdmin && /*#__PURE__*/React.createElement("div", {
-    className: "student-actions"
+    className: "stu-card",
+    "data-tone": teamTone(s.group)
   }, /*#__PURE__*/React.createElement("button", {
-    className: "point-add plus",
-    onClick: e => {
-      e.stopPropagation();
-      handleAddPoints(s.id, s.points, 1);
-    }
-  }, "+"), /*#__PURE__*/React.createElement("button", {
-    className: "point-add minus",
-    onClick: e => {
-      e.stopPropagation();
-      handleAddPoints(s.id, s.points, -1);
-    }
-  }, "-")))))), view === 'table' && /*#__PURE__*/React.createElement("div", {
-    className: "table-container"
-  }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "\uBC88\uD638"), /*#__PURE__*/React.createElement("th", null, "\uC774\uB984"), /*#__PURE__*/React.createElement("th", null, "\uC131\uBCC4"), /*#__PURE__*/React.createElement("th", null, "\uC0DD\uC77C"), /*#__PURE__*/React.createElement("th", null, "\uC54C\uB808\uB974\uAE30"), /*#__PURE__*/React.createElement("th", null, "\uAC74\uAC15"), /*#__PURE__*/React.createElement("th", null, "\uD3EC\uC778\uD2B8"))), /*#__PURE__*/React.createElement("tbody", null, filtered.map(s => /*#__PURE__*/React.createElement("tr", {
+    type: "button",
+    className: "stu-card-main",
+    onClick: () => handleSelectStudent(s)
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "stu-card-top"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "att-no num"
+  }, s.number), /*#__PURE__*/React.createElement("span", {
+    className: "stu-name"
+  }, s.name)), /*#__PURE__*/React.createElement("span", {
+    className: "stu-meta"
+  }, [s.group && `${s.group}팀`, s.gender === 'F' ? '여' : '남', fmtBirthday(s.birthday)].filter(Boolean).join(' · ')), (s.allergies || s.healthNotes) && /*#__PURE__*/React.createElement("span", {
+    className: "stu-tags"
+  }, s.allergies && /*#__PURE__*/React.createElement("span", {
+    className: "stu-tag is-warn"
+  }, "\uC54C\uB808\uB974\uAE30 ", s.allergies), s.healthNotes && /*#__PURE__*/React.createElement("span", {
+    className: "stu-tag"
+  }, s.healthNotes))), /*#__PURE__*/React.createElement("div", {
+    className: "stu-card-foot"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "stu-points"
+  }, /*#__PURE__*/React.createElement("strong", {
+    className: "num"
+  }, s.points || 0), "\uC810"), isAdmin && /*#__PURE__*/React.createElement("span", {
+    className: "stu-steppers"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "icon-ghost",
+    "aria-label": `${s.name} 1점 빼기`,
+    onClick: () => handleAddPoints(s.id, s.points, -1)
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "minus",
+    size: 16
+  })), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "icon-ghost is-plus",
+    "aria-label": `${s.name} 1점 더하기`,
+    onClick: () => handleAddPoints(s.id, s.points, 1)
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "plus",
+    size: 16
+  }))))))) : /*#__PURE__*/React.createElement("div", {
+    className: "wcard wcard-empty stu-empty"
+  }, search ? `“${search}”에 맞는 학생이 없어요.` : '아직 학생이 없어요. 엑셀로 명단을 올려 주세요.')), view === 'table' && /*#__PURE__*/React.createElement("div", {
+    className: "wk-card"
+  }, /*#__PURE__*/React.createElement("table", {
+    className: "stu-table"
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
+    className: "stu-col-no"
+  }, "\uBC88\uD638"), /*#__PURE__*/React.createElement("th", null, "\uC774\uB984"), /*#__PURE__*/React.createElement("th", null, "\uC131\uBCC4"), /*#__PURE__*/React.createElement("th", null, "\uC0DD\uC77C"), /*#__PURE__*/React.createElement("th", null, "\uC54C\uB808\uB974\uAE30"), /*#__PURE__*/React.createElement("th", null, "\uAC74\uAC15"), /*#__PURE__*/React.createElement("th", {
+    className: "stu-col-num"
+  }, "\uD3EC\uC778\uD2B8"))), /*#__PURE__*/React.createElement("tbody", null, filtered.map(s => /*#__PURE__*/React.createElement("tr", {
     key: s.id,
+    tabIndex: 0,
     onClick: () => handleSelectStudent(s),
-    style: {
-      cursor: 'pointer'
-    }
-  }, /*#__PURE__*/React.createElement("td", null, s.number), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '0.5rem'
-    }
+    onKeyDown: e => e.key === 'Enter' && handleSelectStudent(s)
+  }, /*#__PURE__*/React.createElement("td", {
+    className: "stu-col-no num"
+  }, s.number), /*#__PURE__*/React.createElement("td", {
+    className: "stu-table-name"
+  }, s.name), /*#__PURE__*/React.createElement("td", null, s.gender === 'F' ? '여' : '남'), /*#__PURE__*/React.createElement("td", null, fmtBirthday(s.birthday) || '—'), /*#__PURE__*/React.createElement("td", {
+    className: s.allergies ? 'stu-warn' : 'stu-dim'
+  }, s.allergies || '—'), /*#__PURE__*/React.createElement("td", {
+    className: s.healthNotes ? '' : 'stu-dim'
+  }, s.healthNotes || '—'), /*#__PURE__*/React.createElement("td", {
+    className: "stu-col-num num"
+  }, s.points || 0)))))), view === 'seating' && /*#__PURE__*/React.createElement("section", {
+    className: "wcard"
   }, /*#__PURE__*/React.createElement("div", {
-    className: `avatar sm ${getAvatarColor(s.gender)}`
-  }, getInitials(s.name)), s.name)), /*#__PURE__*/React.createElement("td", null, s.gender === 'M' ? '남' : '여'), /*#__PURE__*/React.createElement("td", null, s.birthday?.slice(5) || '-'), /*#__PURE__*/React.createElement("td", null, s.allergies || '-'), /*#__PURE__*/React.createElement("td", null, s.healthNotes || '-'), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("span", {
-    className: "student-points"
-  }, "\u2B50 ", s.points))))))), view === 'seating' && /*#__PURE__*/React.createElement("div", {
-    className: "seating-container"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "seating-header"
-  }, /*#__PURE__*/React.createElement("h3", null, "\uD83D\uDCD0 \uC790\uB9AC \uBC30\uCE58\uB3C4"), isAdmin && /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: '0.8rem',
-      color: 'var(--text-secondary)',
-      marginLeft: '1rem'
-    }
-  }, "\uD83D\uDCA1 \uC774\uB984\uD45C\uB97C \uB4DC\uB798\uADF8 \uC564 \uB4DC\uB86D\uD558\uC5EC \uC790\uB9AC\uB97C \uBC14\uAFC0 \uC218 \uC788\uC2B5\uB2C8\uB2E4.")), /*#__PURE__*/React.createElement("div", {
-    className: "seating-board"
+    className: "wcard-head"
+  }, /*#__PURE__*/React.createElement("h2", {
+    className: "wcard-title"
+  }, "\uC790\uB9AC \uBC30\uCE58\uB3C4"), isAdmin && /*#__PURE__*/React.createElement("span", {
+    className: "wcard-meta"
+  }, "\uC774\uB984\uD45C\uB97C \uB04C\uC5B4\uB2E4 \uB193\uC73C\uBA74 \uC790\uB9AC\uAC00 \uBC14\uB00C\uC5B4\uC694")), /*#__PURE__*/React.createElement("div", {
+    className: "wcard-body seating-container"
   }, /*#__PURE__*/React.createElement("div", {
     className: "teacher-desk"
   }, "\uAD50\uD0C1"), /*#__PURE__*/React.createElement("div", {
@@ -2677,404 +2776,179 @@ function StudentsPage() {
       cursor: isAdmin ? 'grab' : 'pointer'
     }
   }, /*#__PURE__*/React.createElement("div", {
+    className: "seat-number num"
+  }, s.number), /*#__PURE__*/React.createElement("div", {
     className: "seat-name"
-  }, s.name), /*#__PURE__*/React.createElement("div", {
-    className: "seat-number"
-  }, s.number, "\uBC88")))))), view === 'points' && /*#__PURE__*/React.createElement("div", {
-    className: "points-section"
+  }, s.name)))))), view === 'points' && /*#__PURE__*/React.createElement("section", {
+    className: "wcard"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "points-header",
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      marginBottom: '1rem',
-      alignItems: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("h3", {
-    style: {
-      margin: 0
-    }
-  }, "\uD83C\uDFC6 \uCE6D\uCC2C \uD3EC\uC778\uD2B8 \uB7AD\uD0B9"), /*#__PURE__*/React.createElement("div", {
-    className: "points-tabs",
-    style: {
-      display: 'flex',
-      gap: '0.5rem'
-    }
+    className: "wcard-head"
+  }, /*#__PURE__*/React.createElement("h2", {
+    className: "wcard-title"
+  }, "\uCE6D\uCC2C \uD3EC\uC778\uD2B8 \uC21C\uC704"), /*#__PURE__*/React.createElement("div", {
+    className: "mode-switch",
+    role: "group",
+    "aria-label": "\uC21C\uC704 \uAE30\uC900"
   }, /*#__PURE__*/React.createElement("button", {
-    className: `admin-btn ${pointsView === 'individual' ? 'active' : ''}`,
-    style: pointsView === 'individual' ? {
-      background: 'var(--primary)',
-      color: 'white',
-      borderColor: 'var(--primary)'
-    } : {},
+    type: "button",
+    "aria-pressed": pointsView === 'individual',
     onClick: () => setPointsView('individual')
   }, "\uAC1C\uC778\uBCC4"), /*#__PURE__*/React.createElement("button", {
-    className: `admin-btn ${pointsView === 'group' ? 'active' : ''}`,
-    style: pointsView === 'group' ? {
-      background: 'var(--primary)',
-      color: 'white',
-      borderColor: 'var(--primary)'
-    } : {},
+    type: "button",
+    "aria-pressed": pointsView === 'group',
     onClick: () => setPointsView('group')
-  }, "\uD300\uBCC4"))), pointsView === 'individual' ? /*#__PURE__*/React.createElement("div", {
-    className: "points-leaderboard"
-  }, sorted.map((s, i) => /*#__PURE__*/React.createElement("div", {
+  }, "\uD300\uBCC4"))), /*#__PURE__*/React.createElement("div", {
+    className: "wcard-body"
+  }, pointsView === 'individual' ? /*#__PURE__*/React.createElement("ol", {
+    className: "stu-rank"
+  }, sorted.map((s, i) => /*#__PURE__*/React.createElement("li", {
     key: s.id,
-    className: "points-row glass-card",
-    style: {
-      background: 'var(--bg-card)',
-      border: '1px solid var(--glass-border)',
-      borderRadius: 'var(--radius-md)',
-      padding: '0.75rem 1rem',
-      marginBottom: '0.5rem',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '1rem'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: `points-rank ${i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : ''}`
-  }, i + 1), /*#__PURE__*/React.createElement("div", {
-    className: `avatar sm ${getAvatarColor(s.gender)}`
-  }, getInitials(s.name)), /*#__PURE__*/React.createElement("div", {
-    className: "points-student-name",
-    style: {
-      flex: 1,
-      fontWeight: 600
-    }
-  }, s.name, " ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: '0.75rem',
-      color: 'var(--text-secondary)',
-      marginLeft: '0.5rem',
-      fontWeight: 500
-    }
-  }, s.group, "\uD300")), /*#__PURE__*/React.createElement("div", {
-    className: "points-score",
-    style: {
-      fontWeight: 800,
-      fontSize: '1.1rem',
-      color: 'var(--primary)'
-    }
-  }, "\u2B50 ", s.points), isAdmin && /*#__PURE__*/React.createElement("div", {
-    className: "points-actions",
-    style: {
-      display: 'flex',
-      gap: '0.25rem'
-    }
+    className: rankClass(i)
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "rank-no num"
+  }, i + 1), /*#__PURE__*/React.createElement("span", {
+    className: "stu-rank-name"
+  }, s.name, /*#__PURE__*/React.createElement("span", {
+    className: "stu-team",
+    "data-tone": teamTone(s.group)
+  }, s.group, "\uD300")), /*#__PURE__*/React.createElement("span", {
+    className: "stu-rank-score"
+  }, /*#__PURE__*/React.createElement("strong", {
+    className: "num"
+  }, s.points || 0), "\uC810"), isAdmin && /*#__PURE__*/React.createElement("span", {
+    className: "stu-rank-actions"
   }, /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-primary",
+    type: "button",
+    className: "chip-btn",
     onClick: () => handleAddPoints(s.id, s.points, 5)
-  }, "+5\uC810"), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: {
-      background: 'var(--success)',
-      color: 'white'
-    },
+  }, "+5"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "chip-btn",
     onClick: () => handleAddPoints(s.id, s.points, 10)
-  }, "+10\uC810"), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-danger",
+  }, "+10"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "chip-btn is-minus",
     onClick: () => handleAddPoints(s.id, s.points, -5)
-  }, "-5\uC810"))))) : /*#__PURE__*/React.createElement("div", {
-    className: "points-leaderboard group-leaderboard"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: '1rem',
-      fontSize: '0.85rem',
-      color: 'var(--text-secondary)'
-    }
-  }, isAdmin ? '💡 학생 이름표를 드래그하여 다른 팀으로 옮겨보세요.' : ''), groupPoints.map((g, i) => /*#__PURE__*/React.createElement("div", {
+  }, "\u22125"))))) : /*#__PURE__*/React.createElement(React.Fragment, null, isAdmin && /*#__PURE__*/React.createElement("p", {
+    className: "lrn-hint stu-hint"
+  }, "\uD559\uC0DD \uC774\uB984\uD45C\uB97C \uB2E4\uB978 \uD300\uC73C\uB85C \uB04C\uC5B4\uB2E4 \uB193\uC73C\uBA74 \uD300\uC774 \uBC14\uB00C\uC5B4\uC694."), /*#__PURE__*/React.createElement("ol", {
+    className: "stu-teams"
+  }, groupPoints.map((g, i) => /*#__PURE__*/React.createElement("li", {
     key: g.groupId,
-    className: "points-row glass-card group-card-dnd",
+    "data-tone": teamTone(g.groupId),
+    className: `stu-team-card ${rankClass(i)}`,
     onDragOver: handleDragOverTeam,
     onDragLeave: handleDragLeaveTeam,
-    onDrop: e => handleDropTeam(e, g.groupId),
-    style: {
-      background: 'var(--bg-card)',
-      border: '2px solid var(--glass-border)',
-      borderRadius: 'var(--radius-lg)',
-      padding: '1.25rem',
-      marginBottom: '0.75rem',
-      display: 'flex',
-      alignItems: 'flex-start',
-      gap: '1.5rem'
-    }
+    onDrop: e => handleDropTeam(e, g.groupId)
   }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      gap: '0.5rem'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: `points-rank ${i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : ''}`,
-    style: {
-      fontSize: '1.2rem',
-      width: '30px',
-      height: '30px',
-      textAlign: 'center'
-    }
-  }, i + 1), /*#__PURE__*/React.createElement("div", {
-    className: "group-avatar",
-    style: {
-      width: '40px',
-      height: '40px',
-      borderRadius: 'var(--radius-full)',
-      background: 'var(--primary-50)',
-      color: 'var(--primary-dark)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontWeight: 800,
-      fontSize: '1.2rem'
-    }
-  }, g.groupId), /*#__PURE__*/React.createElement("div", {
-    className: "points-score",
-    style: {
-      fontWeight: 800,
-      fontSize: '1.1rem',
-      color: 'var(--primary-dark)'
-    }
-  }, "\u2B50 ", g.totalPoints)), /*#__PURE__*/React.createElement("div", {
-    className: "points-student-name",
-    style: {
-      flex: 1
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontWeight: 800,
-      fontSize: '1.1rem',
-      marginBottom: '0.75rem',
-      color: 'var(--text-primary)'
-    }
-  }, g.groupId, "\uD300"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexWrap: 'wrap',
-      gap: '0.5rem'
-    }
-  }, g.students.map(s => /*#__PURE__*/React.createElement("div", {
+    className: "stu-team-head"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "rank-no num"
+  }, i + 1), /*#__PURE__*/React.createElement("span", {
+    className: "stu-team-name"
+  }, g.groupId, "\uD300"), /*#__PURE__*/React.createElement("span", {
+    className: "stu-rank-score"
+  }, /*#__PURE__*/React.createElement("strong", {
+    className: "num"
+  }, g.totalPoints), "\uC810")), /*#__PURE__*/React.createElement("div", {
+    className: "stu-pills"
+  }, g.students.map(s => /*#__PURE__*/React.createElement("span", {
     key: s.id,
-    className: "team-student-pill",
+    className: "stu-pill",
     draggable: isAdmin,
     onDragStart: e => handleDragStartTeam(e, s),
     onDragEnd: handleDragEndTeam,
     style: {
-      padding: '0.4rem 0.75rem',
-      background: 'var(--gray-50)',
-      border: '1px solid var(--border-light)',
-      borderRadius: 'var(--radius-xl)',
-      fontSize: '0.85rem',
-      fontWeight: 600,
-      display: 'flex',
-      alignItems: 'center',
-      gap: '0.4rem',
       cursor: isAdmin ? 'grab' : 'default'
     }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: `avatar sm ${getAvatarColor(s.gender)}`,
-    style: {
-      width: '20px',
-      height: '20px',
-      fontSize: '0.6rem'
-    }
-  }, getInitials(s.name)), s.name)), g.students.length === 0 && /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: '0.85rem',
-      color: 'var(--text-muted)'
-    }
-  }, "\uD3B8\uC131\uB41C \uD559\uC0DD\uC774 \uC5C6\uC2B5\uB2C8\uB2E4. \uB4DC\uB798\uADF8\uD558\uC5EC \uCD94\uAC00\uD558\uC138\uC694.")))))))), activeTab === 'behavior' && /*#__PURE__*/React.createElement("div", {
-    className: "behavior-tab"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "behavior-grid",
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '1.5rem'
-    }
+  }, s.name)), g.students.length === 0 && /*#__PURE__*/React.createElement("span", {
+    className: "lrn-none"
+  }, "\uC544\uC9C1 \uC544\uBB34\uB3C4 \uC5C6\uC5B4\uC694"))))))))), activeTab === 'behavior' && /*#__PURE__*/React.createElement("ul", {
+    className: "stu-behavior"
   }, students.map(s => {
     const recs = studentRecords[s.id] || [];
-    return /*#__PURE__*/React.createElement("div", {
+    return /*#__PURE__*/React.createElement("li", {
       key: s.id,
-      className: "behavior-student-card"
+      className: "wcard stu-bh"
     }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        width: '160px',
-        flexShrink: 0,
-        textAlign: 'center',
-        borderRight: '1px solid var(--border-light)',
-        paddingRight: '1rem',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      className: `avatar xl ${getAvatarColor(s.gender)}`,
-      style: {
-        margin: '0 auto 0.75rem auto'
-      }
-    }, getInitials(s.name)), /*#__PURE__*/React.createElement("h3", {
-      style: {
-        margin: '0 0 0.5rem 0'
-      }
-    }, s.number, ". ", s.name), isAdmin && /*#__PURE__*/React.createElement("button", {
-      className: "btn-ai-generate",
+      className: "stu-bh-who"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "stu-card-top"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "att-no num"
+    }, s.number), /*#__PURE__*/React.createElement("span", {
+      className: "stu-name"
+    }, s.name)), isAdmin && /*#__PURE__*/React.createElement("div", {
+      className: "stu-bh-actions"
+    }, /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "btn btn-secondary btn-sm",
+      onClick: () => handleSelectStudent(s)
+    }, /*#__PURE__*/React.createElement(Icon, {
+      name: "plus",
+      size: 16
+    }), " \uAE30\uB85D \uCD94\uAC00"), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "btn btn-primary btn-sm",
       onClick: () => handleGenerateAI(s),
       disabled: generatingAiId === s.id
-    }, generatingAiId === s.id ? '⏳ 생성 중...' : '✨ AI 생성'), isAdmin && /*#__PURE__*/React.createElement("button", {
-      className: "btn btn-sm btn-secondary",
-      onClick: () => handleSelectStudent(s),
-      style: {
-        marginTop: '0.5rem',
-        width: '100%',
-        fontWeight: 700
-      }
-    }, "\u2795 \uAE30\uB85D \uCD94\uAC00")), /*#__PURE__*/React.createElement("div", {
-      style: {
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column'
-      }
-    }, /*#__PURE__*/React.createElement("h4", {
-      style: {
-        marginBottom: '0.5rem',
-        color: 'var(--text-secondary)',
-        display: 'flex',
-        justifyContent: 'space-between',
-        fontWeight: 700
-      }
-    }, /*#__PURE__*/React.createElement("span", null, "\uD83D\uDCDD \uB204\uC801 \uAE30\uB85D"), /*#__PURE__*/React.createElement("span", {
-      className: "badge"
-    }, recs.length, "\uAC74")), /*#__PURE__*/React.createElement("div", {
-      className: "behavior-record-box"
-    }, recs.length > 0 ? /*#__PURE__*/React.createElement("ul", {
-      style: {
-        paddingLeft: '1.25rem',
-        margin: 0,
-        fontSize: '0.875rem',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '0.5rem'
-      }
+    }, generatingAiId === s.id ? 'AI가 쓰는 중…' : s.aiSummary ? 'AI 의견 다시 쓰기' : 'AI 의견 쓰기'))), /*#__PURE__*/React.createElement("div", {
+      className: "stu-bh-col"
+    }, /*#__PURE__*/React.createElement("h3", {
+      className: "stu-bh-title"
+    }, "\uB204\uC801 \uAE30\uB85D ", /*#__PURE__*/React.createElement("span", {
+      className: "num"
+    }, recs.length)), recs.length > 0 ? /*#__PURE__*/React.createElement("ul", {
+      className: "stu-records"
     }, recs.map((r, i) => /*#__PURE__*/React.createElement("li", {
-      key: i
-    }, /*#__PURE__*/React.createElement("strong", {
-      style: {
-        color: 'var(--primary)'
-      }
-    }, "[", r.date, "]"), " ", r.content, isAdmin && /*#__PURE__*/React.createElement("button", {
-      style: {
-        background: 'transparent',
-        border: 'none',
-        color: '#DC2626',
-        fontSize: '0.75rem',
-        cursor: 'pointer',
-        marginLeft: '0.5rem',
-        fontWeight: 600
-      },
+      key: r.id || i
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "stu-record-meta"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "num"
+    }, r.date), r.category && /*#__PURE__*/React.createElement("span", {
+      className: "notice-tag"
+    }, r.category)), /*#__PURE__*/React.createElement("p", {
+      className: "stu-record-text"
+    }, r.content), isAdmin && /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "icon-ghost",
+      "aria-label": "\uC774 \uAE30\uB85D \uC0AD\uC81C",
       onClick: () => {
         if (confirm('이 기록을 삭제하시겠습니까?')) deleteStudentRecord(s.id, r.id);
       }
-    }, "\uD83D\uDDD1\uFE0F")))) : /*#__PURE__*/React.createElement("div", {
-      className: "empty-state",
-      style: {
-        minHeight: '100px',
-        padding: 0
-      }
-    }, "\uAE30\uB85D\uC774 \uC5C6\uC2B5\uB2C8\uB2E4."))), /*#__PURE__*/React.createElement("div", {
-      style: {
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column'
-      }
-    }, /*#__PURE__*/React.createElement("h4", {
-      style: {
-        marginBottom: '0.5rem',
-        color: 'var(--primary)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '0.5rem',
-        fontWeight: 800
-      }
-    }, "\u2728 \uC885\uD569\uC758\uACAC (AI)"), /*#__PURE__*/React.createElement("div", {
-      className: "behavior-ai-box"
-    }, s.aiSummary ? /*#__PURE__*/React.createElement("div", {
-      style: {
-        whiteSpace: 'pre-wrap'
-      }
-    }, s.aiSummary) : /*#__PURE__*/React.createElement("div", {
-      className: "empty-state",
-      style: {
-        minHeight: '100px',
-        padding: 0,
-        opacity: 0.6,
-        fontSize: '0.85rem'
-      }
-    }, "AI \uC0DD\uC131 \uBC84\uD2BC\uC744 \uB20C\uB7EC \uC885\uD569\uC758\uACAC\uC744 \uC791\uC131\uD574\uBCF4\uC138\uC694."))));
-  }))), activeTab === 'evaluation' && /*#__PURE__*/React.createElement("div", {
-    className: "evaluation-tab"
-  }, assignments.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    className: "empty-state"
-  }, /*#__PURE__*/React.createElement("p", null, "\uB4F1\uB85D\uB41C \uACFC\uC81C \uBC0F \uC218\uD589\uD3C9\uAC00\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4.")) : /*#__PURE__*/React.createElement("div", {
-    className: "table-container",
-    style: {
-      overflowX: 'auto',
-      background: 'var(--bg-card)',
-      borderRadius: 'var(--radius-lg)'
-    }
+    }, /*#__PURE__*/React.createElement(Icon, {
+      name: "trash",
+      size: 16
+    }))))) : /*#__PURE__*/React.createElement("p", {
+      className: "stu-bh-empty"
+    }, "\uC544\uC9C1 \uAE30\uB85D\uC774 \uC5C6\uC5B4\uC694.")), /*#__PURE__*/React.createElement("div", {
+      className: "stu-bh-col"
+    }, /*#__PURE__*/React.createElement("h3", {
+      className: "stu-bh-title"
+    }, "\uC885\uD569\uC758\uACAC"), s.aiSummary ? /*#__PURE__*/React.createElement("p", {
+      className: "stu-summary"
+    }, s.aiSummary) : /*#__PURE__*/React.createElement("p", {
+      className: "stu-bh-empty"
+    }, "\uAE30\uB85D\uC744 \uBAA8\uC740 \uB4A4 \u201CAI \uC758\uACAC \uC4F0\uAE30\u201D\uB97C \uB204\uB974\uBA74 \uCD08\uC548\uC774 \uC0DD\uACA8\uC694.")));
+  })), activeTab === 'evaluation' && (assignments.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "wcard wcard-empty stu-empty"
+  }, "\uB4F1\uB85D\uB41C \uACFC\uC81C\xB7\uC218\uD589\uD3C9\uAC00\uAC00 \uC5C6\uC5B4\uC694. \uD559\uC2B5 \uAD00\uB9AC\uC5D0\uC11C \uD65C\uB3D9\uC744 \uCD94\uAC00\uD574 \uC8FC\uC138\uC694.") : /*#__PURE__*/React.createElement("div", {
+    className: "wk-card"
   }, /*#__PURE__*/React.createElement("table", {
-    style: {
-      minWidth: '100%',
-      whiteSpace: 'nowrap'
-    }
+    className: "stu-eval"
   }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
-    style: {
-      position: 'sticky',
-      left: 0,
-      zIndex: 10,
-      background: 'var(--gray-50)',
-      minWidth: '120px'
-    }
-  }, "\uD559\uC0DD \uC774\uB984"), assignments.map(a => /*#__PURE__*/React.createElement("th", {
-    key: a.id,
-    style: {
-      minWidth: '160px',
-      textAlign: 'center',
-      padding: '1rem'
-    }
+    className: "stu-eval-who"
+  }, "\uD559\uC0DD"), assignments.map(a => /*#__PURE__*/React.createElement("th", {
+    key: a.id
   }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'inline-block',
-      padding: '0.2rem 0.5rem',
-      background: a.type === '수행평가' ? '#FFF4ED' : '#ECFDF5',
-      color: a.type === '수행평가' ? '#E8590C' : '#059669',
-      borderRadius: '4px',
-      fontSize: '0.75rem',
-      marginBottom: '0.4rem'
-    }
-  }, a.type), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: '0.9rem',
-      color: 'var(--text-primary)',
-      fontWeight: 700,
-      marginBottom: '0.25rem',
-      whiteSpace: 'normal',
-      wordBreak: 'keep-all'
-    }
-  }, a.title), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: '0.75rem',
-      color: 'var(--text-secondary)'
-    }
-  }, a.dueDate), isAdmin && /*#__PURE__*/React.createElement("button", {
-    style: {
-      background: 'transparent',
-      border: 'none',
-      color: '#DC2626',
-      fontSize: '0.75rem',
-      cursor: 'pointer',
-      marginTop: '0.5rem',
-      fontWeight: 600
-    },
+    className: "stu-eval-head"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: `lrn-type ${a.type === '수행평가' ? 'is-eval' : ''}`
+  }, a.type), isAdmin && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "icon-ghost",
+    "aria-label": `${a.title} 삭제`,
     onClick: () => {
       if (confirm('이 항목을 정말 삭제하시겠습니까?')) {
         dispatch({
@@ -3084,66 +2958,39 @@ function StudentsPage() {
         showToast('삭제되었습니다.', 'success');
       }
     }
-  }, "\uD83D\uDDD1\uFE0F \uC0AD\uC81C"))))), /*#__PURE__*/React.createElement("tbody", null, students.map(s => /*#__PURE__*/React.createElement("tr", {
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "trash",
+    size: 16
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "stu-eval-title"
+  }, a.title), /*#__PURE__*/React.createElement("div", {
+    className: "stu-eval-date num"
+  }, a.dueDate))))), /*#__PURE__*/React.createElement("tbody", null, students.map(s => /*#__PURE__*/React.createElement("tr", {
     key: s.id
-  }, /*#__PURE__*/React.createElement("td", {
-    style: {
-      position: 'sticky',
-      left: 0,
-      zIndex: 5,
-      background: 'var(--bg-card)',
-      fontWeight: 600,
-      borderRight: '1px solid var(--border-light)'
-    }
-  }, s.number, "\uBC88 ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      marginLeft: '0.25rem'
-    }
-  }, s.name)), assignments.map(a => {
+  }, /*#__PURE__*/React.createElement("th", {
+    scope: "row",
+    className: "stu-eval-who"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "att-no num"
+  }, s.number), s.name), assignments.map(a => {
     const submission = a.submissions?.[s.id];
     const grade = submission?.grade;
     return /*#__PURE__*/React.createElement("td", {
       key: `${s.id}-${a.id}`,
-      style: {
-        textAlign: 'center',
-        background: submission ? 'transparent' : '#FEF2F2'
-      }
+      className: submission ? '' : 'is-missing'
     }, submission ? isAdmin ? /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        gap: '0.25rem',
-        justifyContent: 'center'
-      }
+      className: "stu-grade",
+      role: "group",
+      "aria-label": `${s.name} ${a.title} 평가`
     }, ['상', '중', '하'].map(g => /*#__PURE__*/React.createElement("button", {
       key: g,
-      className: `grade-btn ${grade === g ? 'active' : ''}`,
-      style: {
-        padding: '4px 10px',
-        borderRadius: '4px',
-        border: '1px solid var(--border-light)',
-        background: grade === g ? 'var(--primary)' : 'white',
-        color: grade === g ? 'white' : 'var(--text-secondary)',
-        cursor: 'pointer',
-        fontWeight: 600,
-        fontSize: '0.75rem'
-      },
+      type: "button",
+      "aria-pressed": grade === g,
       onClick: () => handleEvaluate(a.id, s.id, g)
     }, g))) : /*#__PURE__*/React.createElement("span", {
-      style: {
-        display: 'inline-block',
-        padding: '0.25rem 0.75rem',
-        background: '#D1FAE5',
-        color: '#065F46',
-        borderRadius: '4px',
-        fontWeight: 700,
-        fontSize: '0.8rem'
-      }
-    }, grade || '채점 대기') : /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: '#DC2626',
-        fontSize: '0.8rem',
-        fontWeight: 600
-      }
+      className: `stu-grade-chip ${grade ? '' : 'is-wait'}`
+    }, grade || '채점 전') : /*#__PURE__*/React.createElement("span", {
+      className: "stu-missing"
     }, "\uBBF8\uC81C\uCD9C"));
   }))))))), selectedStudent && /*#__PURE__*/React.createElement("div", {
     className: "modal-overlay",
@@ -3218,27 +3065,21 @@ function StudentsPage() {
       gap: '0.5rem'
     }
   }, /*#__PURE__*/React.createElement("h3", null, selectedStudent.name), isAdmin && /*#__PURE__*/React.createElement("button", {
-    className: "edit-name-btn",
+    type: "button",
     onClick: () => {
       setEditNameValue(selectedStudent.name);
       setIsEditingName(true);
     },
-    style: {
-      background: 'transparent',
-      border: 'none',
-      cursor: 'pointer',
-      color: 'var(--text-muted)',
-      fontSize: '1.2rem'
-    }
-  }, "\u270E"))), /*#__PURE__*/React.createElement("p", null, selectedStudent.number, "\uBC88 \xB7 ", selectedStudent.gender === 'M' ? '남학생' : '여학생', " \xB7 \uC0DD\uC77C: ", selectedStudent.birthday))), isAdmin && /*#__PURE__*/React.createElement("div", {
+    "aria-label": "\uC774\uB984 \uACE0\uCE58\uAE30",
+    className: "icon-ghost"
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "edit",
+    size: 16
+  })))), /*#__PURE__*/React.createElement("p", null, selectedStudent.number, "\uBC88 \xB7 ", selectedStudent.gender === 'M' ? '남학생' : '여학생', " \xB7 \uC0DD\uC77C: ", selectedStudent.birthday))), isAdmin && /*#__PURE__*/React.createElement("div", {
     className: "student-edit-section"
   }, /*#__PURE__*/React.createElement("h4", {
-    style: {
-      fontSize: '0.875rem',
-      fontWeight: 700,
-      marginBottom: '0.75rem'
-    }
-  }, "\uD83D\uDCDD \uC815\uBCF4 \uC218\uC815"), /*#__PURE__*/React.createElement("div", {
+    className: "stu-modal-h"
+  }, "\uC815\uBCF4 \uC218\uC815"), /*#__PURE__*/React.createElement("div", {
     className: "edit-fields-grid"
   }, /*#__PURE__*/React.createElement("div", {
     className: "edit-field"
@@ -3278,35 +3119,15 @@ function StudentsPage() {
   }, "\uC800\uC7A5"), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-danger btn-sm",
     onClick: handleResetPoints
-  }, "\uD3EC\uC778\uD2B8 \uCD08\uAE30\uD654")))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: '0.75rem'
-    }
-  }, /*#__PURE__*/React.createElement("strong", {
-    style: {
-      fontSize: '0.875rem'
-    }
-  }, "\uD83D\uDCDE \uD559\uBD80\uBAA8 \uC5F0\uB77D\uCC98:"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      marginLeft: '0.5rem',
-      fontSize: '0.875rem'
-    }
+  }, "\uD3EC\uC778\uD2B8 \uCD08\uAE30\uD654")))), /*#__PURE__*/React.createElement("p", {
+    className: "stu-modal-line"
+  }, /*#__PURE__*/React.createElement("span", null, "\uD559\uBD80\uBAA8 \uC5F0\uB77D\uCC98"), /*#__PURE__*/React.createElement("strong", {
+    className: "num"
   }, selectedStudent.parentPhone || '미등록')), isAdmin && /*#__PURE__*/React.createElement("div", {
     className: "record-input-section"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: '0.75rem'
-    }
   }, /*#__PURE__*/React.createElement("h4", {
-    style: {
-      fontSize: '0.875rem',
-      fontWeight: 700,
-      margin: 0
-    }
-  }, "\uD83D\uDCCB \uAD00\uCC30/\uC0C1\uB2F4 \uAE30\uB85D \uCD94\uAC00")), /*#__PURE__*/React.createElement("div", {
+    className: "stu-modal-h"
+  }, "\uAD00\uCC30\xB7\uC0C1\uB2F4 \uAE30\uB85D \uCD94\uAC00"), /*#__PURE__*/React.createElement("div", {
     className: "record-input-row"
   }, /*#__PURE__*/React.createElement("select", {
     className: "form-input",
@@ -3355,12 +3176,10 @@ function StudentsPage() {
   }, "\uC800\uC7A5"))), records.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "records-list-section"
   }, /*#__PURE__*/React.createElement("h4", {
-    style: {
-      fontSize: '0.875rem',
-      fontWeight: 700,
-      marginBottom: '0.75rem'
-    }
-  }, "\uD83D\uDCD6 \uAE30\uB85D \uBAA9\uB85D (", records.length, "\uAC74)"), /*#__PURE__*/React.createElement("div", {
+    className: "stu-modal-h"
+  }, "\uAE30\uB85D ", /*#__PURE__*/React.createElement("span", {
+    className: "num"
+  }, records.length), "\uAC74"), /*#__PURE__*/React.createElement("div", {
     className: "counseling-list",
     style: {
       marginTop: '0.5rem'
@@ -3373,19 +3192,16 @@ function StudentsPage() {
   }, c.date, " \xB7 ", /*#__PURE__*/React.createElement("span", {
     className: `record-type-badge ${c.type}`
   }, c.type === 'observation' ? '관찰' : c.type === 'counseling' ? '상담' : c.type), " \xB7 ", c.category, isAdmin && /*#__PURE__*/React.createElement("button", {
-    style: {
-      background: 'transparent',
-      border: 'none',
-      color: '#DC2626',
-      fontSize: '0.75rem',
-      cursor: 'pointer',
-      marginLeft: '0.5rem',
-      fontWeight: 600
-    },
+    type: "button",
+    className: "icon-ghost",
+    "aria-label": "\uC774 \uAE30\uB85D \uC0AD\uC81C",
     onClick: () => {
       if (confirm('이 기록을 삭제하시겠습니까?')) deleteStudentRecord(selectedStudent.id, c.id);
     }
-  }, "\uD83D\uDDD1\uFE0F \uC0AD\uC81C")), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "trash",
+    size: 16
+  }))), /*#__PURE__*/React.createElement("div", {
     className: "counseling-content"
   }, c.content)))))))), showBulkModal && /*#__PURE__*/React.createElement("div", {
     className: "modal-overlay",
@@ -3400,7 +3216,7 @@ function StudentsPage() {
     className: "modal-header"
   }, /*#__PURE__*/React.createElement("h3", {
     className: "modal-title"
-  }, "\uD83D\uDCDD \uD559\uC0DD \uC774\uB984 \uC77C\uAD04 \uC218\uC815"), /*#__PURE__*/React.createElement("button", {
+  }, "\uBA85\uB2E8 \uD55C \uBC88\uC5D0 \uACE0\uCE58\uAE30"), /*#__PURE__*/React.createElement("button", {
     className: "modal-close",
     onClick: () => setShowBulkModal(false)
   }, "\xD7")), /*#__PURE__*/React.createElement("div", {
@@ -4835,6 +4651,7 @@ function WeeklyPlanPage() {
       onClick: handleSave
     }, "\uC800\uC7A5"))) : isAdmin ? /*#__PURE__*/React.createElement("button", {
       type: "button",
+      "data-tone": subjectTone(plan.subject),
       className: `wk-plan ${isEmpty ? 'is-empty' : ''}`,
       "aria-label": `${dd.day}요일 ${p}교시 ${isEmpty ? '입력' : '수정'}`,
       onClick: () => handleEdit(dd.day, p, plan.subject, plan.content)
@@ -4848,6 +4665,7 @@ function WeeklyPlanPage() {
     }, plan.subject), plan.content && /*#__PURE__*/React.createElement("span", {
       className: "wk-content"
     }, plan.content))) : /*#__PURE__*/React.createElement("div", {
+      "data-tone": subjectTone(plan.subject),
       className: `wk-plan ${isEmpty ? 'is-empty' : ''}`
     }, plan.subject && /*#__PURE__*/React.createElement("span", {
       className: "wk-subject"

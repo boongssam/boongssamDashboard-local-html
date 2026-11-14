@@ -130,6 +130,14 @@ if (location.search.includes('mock=1')) {
     { id: 'as2', title: '과학 실험 보고서', subject: '활동', type: '수행평가', dueDate: '2026-11-13', createdAt: '2026-11-13T09:00:00Z', submissions: { 1: {}, 3: {}, 4: {}, 7: {} }, total: 12 },
     { id: 'as3', title: '수학 익힘책 34~35쪽', subject: '활동', type: '과제', dueDate: '2026-11-14', createdAt: '2026-11-14T09:00:00Z', submissions: { 2: {}, 5: {}, 6: {}, 8: {}, 9: {} }, total: 12 },
   ];
+  MOCK_DATA.assignments[0].submissions[1] = { grade: '상' };
+  MOCK_DATA.assignments[0].submissions[2] = { grade: '중' };
+  MOCK_DATA.students[0].aiSummary = '친구들과 협력하여 과제를 해결하는 태도가 돋보이며, 맡은 역할을 끝까지 책임감 있게 수행함.';
+  MOCK_DATA.studentRecords = {
+    1: [{ id: 'r1', date: '2026-11-10', type: 'observation', category: '교우', content: '모둠 활동에서 친구의 의견을 먼저 듣고 정리해 줌.' }, { id: 'r2', date: '2026-11-12', type: 'counseling', category: '학습', content: '수학 분수 계산에서 어려움을 느낀다고 상담함.' }],
+  };
+  const mockWeek = { 월: ['국어', '수학', '사회', '체육', '음악', '창체'], 화: ['수학', '과학', '국어', '영어', '미술', '미술'], 수: ['국어', '도덕', '수학', '체육', '실과', ''], 목: ['과학', '과학', '영어', '국어', '사회', '음악'], 금: ['수학', '국어', '사회', '체육', '창체', ''], 토: ['국어', '수학', '과학', '사회', '영어', '음악'] };
+  MOCK_DATA.weeklyPlans = { '2026-11-09': Object.fromEntries(Object.entries(mockWeek).map(([d, subs]) => [d, Object.fromEntries(subs.map((s, i) => [i + 1, { subject: s, content: s ? `${s} ${i + 3}단원` : '' }]))])) };
   MOCK_DATA.ddays = [{ id: 'd1', name: '현장체험학습', date: '2026-12-20', emoji: '🚌' }];
   MOCK_DATA.announcements = [{ id: 'a1', title: '테스트 공지', content: '목(mock) 모드 테스트용 공지입니다.', type: 'general', date: '2026-11-13' }];
   MOCK_DATA.settings.thermometerGoal = 100;
