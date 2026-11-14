@@ -1,3 +1,4 @@
+function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 const {
   useState,
   useEffect,
@@ -19,7 +20,9 @@ const {
   shuffleArray,
   generateUUID,
   getWeekStart,
-  toISODate
+  toISODate,
+  normalizeBirthday,
+  upcomingAutoDays
 } = window.Helpers;
 const {
   fetchTodayLunch,
@@ -28,6 +31,11 @@ const {
 const {
   generateBehaviorSummary
 } = window.GeminiApi;
+const {
+  extractCalendarId,
+  fetchCalendarEvents,
+  placeEventsInWeek
+} = window.GoogleCalApi;
 const {
   downloadStudentTemplate,
   parseStudentExcel
@@ -143,6 +151,7 @@ function reducer(state, action) {
             [date]: {
               ...dateRecords,
               [studentId]: {
+                ...dateRecords[studentId],
                 status,
                 note: dateRecords[studentId]?.note || '',
                 id: id || dateRecords[studentId]?.id
@@ -157,6 +166,7 @@ function reducer(state, action) {
         attendance: {
           ...state.attendance,
           [action.payload.studentId]: {
+            ...state.attendance[action.payload.studentId],
             status: action.payload.status,
             note: action.payload.note || '',
             id: action.payload.id || state.attendance[action.payload.studentId]?.id
@@ -432,6 +442,22 @@ function AppProvider({
   const [folder, setFolder] = useState(null);
   const [folderStatus, setFolderStatus] = useState('loading'); // loading | none | needs-reconnect | connected
   const saveTimer = useRef(null);
+  const writeQueue = useRef(Promise.resolve()); // db.json 쓰기를 한 줄로 세워서 동시에 쓰다 깨지지 않게
+  const pendingSave = useRef(null); // 아직 안 쓴 저장 — 창을 닫거나 다른 창으로 가면 바로 씀
+  useEffect(() => {
+    const flush = () => {
+      if (document.visibilityState === 'hidden' && pendingSave.current) {
+        clearTimeout(saveTimer.current);
+        pendingSave.current();
+      }
+    };
+    document.addEventListener('visibilitychange', flush);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', flush);
+      window.removeEventListener('pagehide', flush);
+    };
+  }, []);
   const showToast = useCallback((message, type = 'info') => {
     const id = Date.now() + Math.random();
     dispatch({
@@ -449,9 +475,13 @@ function AppProvider({
   }, []);
   const loadFromFolder = useCallback(async handle => {
     const db = await readDb(handle);
+    // 예전에 엑셀 숫자 그대로 저장된 생일도 여기서 날짜로 고쳐 읽음(다음 저장 때 고친 값으로 저장됨)
     dispatch({
       type: 'SET_STUDENTS',
-      payload: db.students || []
+      payload: (db.students || []).map(s => ({
+        ...s,
+        birthday: normalizeBirthday(s.birthday)
+      }))
     });
     dispatch({
       type: 'SET_ANNOUNCEMENTS',
@@ -564,7 +594,8 @@ function AppProvider({
   useEffect(() => {
     if (isDbLoading || folderStatus !== 'connected' || !folder) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
+    const save = () => {
+      pendingSave.current = null;
       const payload = {
         students: state.students,
         attendance: state.monthlyAttendance,
@@ -578,8 +609,13 @@ function AppProvider({
         studentRecords: state.studentRecords,
         settings: state.settings
       };
-      writeDb(folder, payload).catch(err => console.error('로컬 저장 오류:', err));
-    }, 500);
+      writeQueue.current = writeQueue.current.then(() => writeDb(folder, payload)).catch(err => {
+        console.error('로컬 저장 오류:', err);
+        showToast('저장하지 못했어요. 폴더 연결을 확인해 주세요.', 'error');
+      });
+    };
+    pendingSave.current = save;
+    saveTimer.current = setTimeout(save, 400);
     return () => clearTimeout(saveTimer.current);
   }, [state, isDbLoading, folderStatus, folder]);
   const saveWeeklyPlan = useCallback((weekKey, day, period, subject, content) => {
@@ -620,27 +656,6 @@ function AppProvider({
       studentId
     }
   });
-  const updateAttendanceFunc = (studentId, status, note = '', date = null) => {
-    const targetDate = date || toISODate(new Date());
-    dispatch({
-      type: 'SET_ATTENDANCE',
-      payload: {
-        studentId,
-        status,
-        note,
-        id: ''
-      }
-    });
-    dispatch({
-      type: 'UPDATE_MONTHLY_ATTENDANCE',
-      payload: {
-        date: targetDate,
-        studentId,
-        status,
-        id: ''
-      }
-    });
-  };
   const loadAttendanceByDateFunc = useCallback(date => {
     dispatch({
       type: 'SET_SELECTED_ATTENDANCE_DATE',
@@ -812,7 +827,6 @@ function AppProvider({
     showToast,
     updatePoints: updatePointsFunc,
     resetPoints: resetPointsFunc,
-    updateAttendance: updateAttendanceFunc,
     loadAttendanceByDate: loadAttendanceByDateFunc,
     loadMonthlyAttendance: loadMonthlyAttendanceFunc,
     saveAttendanceDay: saveAttendanceDayFunc,
@@ -1044,6 +1058,12 @@ const ICON_PATHS = {
   }), /*#__PURE__*/React.createElement("path", {
     d: "M8.5 11V8a3.5 3.5 0 0 1 7 0v3"
   })),
+  expand: /*#__PURE__*/React.createElement("path", {
+    d: "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"
+  }),
+  shrink: /*#__PURE__*/React.createElement("path", {
+    d: "M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"
+  }),
   sun: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("circle", {
     cx: "12",
     cy: "12",
@@ -1175,13 +1195,15 @@ function AdminSettingsModal({
   const [calendarId2, setCalendarId2] = useState(settings.calendarId2 || '');
   const [calendarId3, setCalendarId3] = useState(settings.calendarId3 || '');
   const [geminiApiKey, setGeminiApiKey] = useState(settings.geminiApiKey || '');
+  const [googleApiKey, setGoogleApiKey] = useState(settings.googleApiKey || '');
   const handleSave = () => {
     updateSettings({
       ...settings,
       calendarId1,
       calendarId2,
       calendarId3,
-      geminiApiKey
+      geminiApiKey,
+      googleApiKey: googleApiKey.trim()
     });
     showToast('설정이 저장되었습니다.', 'success');
     onClose();
@@ -1224,6 +1246,16 @@ function AdminSettingsModal({
   }), /*#__PURE__*/React.createElement("small", {
     className: "settings-help-text"
   }, "\uC77C\uC815 \uBC0F \uACF5\uC9C0 \uD398\uC774\uC9C0\uC5D0 \uD45C\uC2DC\uD560 \uAD6C\uAE00 \uCE98\uB9B0\uB354 ID\uB97C \uC785\uB825\uD558\uC138\uC694. (\uCD5C\uB300 3\uAC1C)")), /*#__PURE__*/React.createElement("div", {
+    className: "settings-form-group"
+  }, /*#__PURE__*/React.createElement("label", null, "\uD83D\uDCC5 Google API \uD0A4 (\uC8FC\uAC04 \uC77C\uC815\uC5D0 \uB2EC\uB825 \uC77C\uC815 \uB123\uAE30)"), /*#__PURE__*/React.createElement("input", {
+    type: "password",
+    className: "settings-form-input",
+    placeholder: "AIza\u2026",
+    value: googleApiKey,
+    onChange: e => setGoogleApiKey(e.target.value)
+  }), /*#__PURE__*/React.createElement("small", {
+    className: "settings-help-text"
+  }, "Google Cloud \uCF58\uC194\uC5D0\uC11C Calendar API\uB97C \uCF1C\uACE0 \uB9CC\uB4E0 API \uD0A4\uB97C \uB123\uC73C\uBA74, \uC704 \uB2EC\uB825\uB4E4\uC758 \uC77C\uC815\uC774 \uC8FC\uAC04 \uC77C\uC815 \uD45C\uC758 \uD574\uB2F9 \uAD50\uC2DC\uC5D0 \uD568\uAED8 \uB098\uC635\uB2C8\uB2E4. \uB2EC\uB825\uC774 \u2018\uACF5\uAC1C\u2019\uB85C \uACF5\uC720\uB418\uC5B4 \uC788\uC5B4\uC57C \uC77D\uC744 \uC218 \uC788\uC5B4\uC694.")), /*#__PURE__*/React.createElement("div", {
     className: "settings-form-group"
   }, /*#__PURE__*/React.createElement("label", null, "\u2728 Gemini API \uD0A4"), /*#__PURE__*/React.createElement("input", {
     type: "password",
@@ -1326,7 +1358,7 @@ const subjectTone = name => {
   const hit = Object.keys(SUBJECT_TONES).find(k => n.startsWith(k));
   return hit ? SUBJECT_TONES[hit] : TONES[[...n].reduce((a, c) => a + c.charCodeAt(0), 0) % TONES.length];
 };
-const teamTone = group => group ? TONES[(group - 1) % TONES.length] : undefined;
+const genderTone = gender => gender === 'F' ? 'coral' : 'tangerine'; // 학생 카드 색은 남녀로만 구분
 const WIDGET_TONES = {
   schedule: 'apricot',
   thermometer: 'carrot',
@@ -1367,12 +1399,82 @@ function Layout({
   const {
     state,
     login,
-    logout
+    logout,
+    updateSettings
   } = useApp();
   const {
     isAdmin,
     settings
   } = state;
+
+  // 메뉴 순서: settings.navOrder(경로 목록) 순서대로, 모르는 메뉴는 뒤에 붙임
+  const navItems = useMemo(() => {
+    const order = Array.isArray(settings?.navOrder) ? settings.navOrder : [];
+    const rank = p => {
+      const i = order.indexOf(p);
+      return i < 0 ? 99 + NAV_ITEMS.findIndex(n => n.path === p) : i;
+    };
+    return [...NAV_ITEMS].sort((a, b) => rank(a.path) - rank(b.path));
+  }, [settings?.navOrder]);
+  const [navDraft, setNavDraft] = useState(null);
+  const navDraftRef = useRef(null);
+  const dragPath = useRef(null);
+  const shownNav = navDraft || navItems;
+  const isCustomOrder = navItems.some((n, i) => n.path !== NAV_ITEMS[i].path);
+  const moveNav = (list, from, to) => {
+    const next = [...list];
+    const [m] = next.splice(from, 1);
+    next.splice(to, 0, m);
+    return next;
+  };
+  const saveNav = list => updateSettings({
+    navOrder: list.map(n => n.path)
+  });
+  const endNavDrag = save => {
+    if (save && navDraftRef.current) saveNav(navDraftRef.current);
+    dragPath.current = null;
+    navDraftRef.current = null;
+    setNavDraft(null);
+  };
+  const navDragProps = item => !isAdmin ? {} : {
+    draggable: true,
+    onDragStart: e => {
+      dragPath.current = item.path;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', item.path);
+      navDraftRef.current = navItems;
+      setNavDraft(navItems);
+    },
+    onDragOver: e => {
+      if (!dragPath.current) return;
+      e.preventDefault();
+      const list = navDraftRef.current || navItems;
+      const from = list.findIndex(n => n.path === dragPath.current),
+        to = list.findIndex(n => n.path === item.path);
+      if (from !== to) {
+        const next = moveNav(list, from, to);
+        navDraftRef.current = next;
+        setNavDraft(next);
+      }
+    },
+    onDrop: e => {
+      e.preventDefault();
+      endNavDrag(true);
+    },
+    onDragEnd: () => endNavDrag(true),
+    // 키보드: Alt+↑/↓ 로 한 칸씩
+    onKeyDown: e => {
+      const d = e.altKey ? {
+        ArrowUp: -1,
+        ArrowDown: 1
+      }[e.key] : 0;
+      if (!d) return;
+      e.preventDefault();
+      const i = navItems.findIndex(n => n.path === item.path),
+        j = i + d;
+      if (j >= 0 && j < navItems.length) saveNav(moveNav(navItems, i, j));
+    }
+  };
   const doLogin = () => {
     if (login(passwordInput)) {
       setShowPinModal(false);
@@ -1413,27 +1515,34 @@ function Layout({
     name: "chevron",
     size: 18
   }))), /*#__PURE__*/React.createElement("nav", {
-    className: "sidebar-nav",
+    className: `sidebar-nav ${navDraft ? 'is-sorting' : ''}`,
     "aria-label": "\uC8FC \uBA54\uB274"
-  }, NAV_ITEMS.map(item => {
+  }, shownNav.map(item => {
     if (item.path === '/attendance' && !isAdmin) return null;
     const isAllowed = isAdmin || STUDENT_ALLOWED_PATHS.includes(item.path);
     const isActive = pathname === item.path;
-    return /*#__PURE__*/React.createElement("a", {
+    return /*#__PURE__*/React.createElement("a", _extends({
       key: item.path,
       href: `#${item.path}`,
       "aria-current": isActive ? 'page' : undefined,
       "data-tone": item.tone,
-      className: `nav-item ${isActive ? 'active' : ''} ${!isAllowed ? 'nav-disabled' : ''}`,
+      className: `nav-item ${isActive ? 'active' : ''} ${!isAllowed ? 'nav-disabled' : ''} ${navDraft && dragPath.current === item.path ? 'is-dragging' : ''}`,
       onClick: () => setSidebarOpen(false)
-    }, /*#__PURE__*/React.createElement("span", {
+    }, navDragProps(item)), /*#__PURE__*/React.createElement("span", {
       className: "nav-icon"
     }, item.icon), /*#__PURE__*/React.createElement("span", {
       className: "nav-label"
     }, item.label), !isAllowed && /*#__PURE__*/React.createElement("span", {
       className: "nav-lock"
     }, "\uC120\uC0DD\uB2D8"));
-  }))), /*#__PURE__*/React.createElement("main", {
+  })), isAdmin && !collapsed && /*#__PURE__*/React.createElement("div", {
+    className: "nav-order-hint"
+  }, /*#__PURE__*/React.createElement("span", null, "\uBA54\uB274\uB97C \uB04C\uC5B4\uC11C \uC21C\uC11C\uB97C \uBC14\uAFC0 \uC218 \uC788\uC5B4\uC694"), isCustomOrder && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => updateSettings({
+      navOrder: []
+    })
+  }, "\uAE30\uBCF8 \uC21C\uC11C\uB85C"))), /*#__PURE__*/React.createElement("main", {
     className: "main-content",
     "data-tone": currentNav?.tone
   }, /*#__PURE__*/React.createElement("header", {
@@ -1488,7 +1597,7 @@ function Layout({
   }, children)), /*#__PURE__*/React.createElement("nav", {
     className: "mobile-nav",
     "aria-label": "\uC8FC \uBA54\uB274"
-  }, NAV_ITEMS.map(item => {
+  }, navItems.map(item => {
     if (item.path === '/attendance' && !isAdmin) return null;
     const isAllowed = isAdmin || STUDENT_ALLOWED_PATHS.includes(item.path);
     const isActive = pathname === item.path;
@@ -1664,7 +1773,9 @@ function normalizeLayout(saved) {
       h: s.h
     }) : d;
   });
-  return settleLayout(merged, null);
+  // 겹치는 데가 없으면 저장한 그대로 보여줌(다시 정렬하면 새로고침 뒤 배치가 달라 보이던 문제)
+  const overlaps = merged.some(a => merged.some(b => gridCollides(a, b)));
+  return overlaps ? settleLayout(merged, null) : merged;
 }
 function DashboardGrid({
   layout,
@@ -1677,6 +1788,9 @@ function DashboardGrid({
   const [width, setWidth] = useState(0);
   const [draft, setDraft] = useState(null);
   const [activeId, setActiveId] = useState(null);
+  const [drag, setDrag] = useState(null); // 끄는 동안 위젯이 마우스를 픽셀 단위로 따라가게 {id, mode, dx, dy, start}
+  const rafRef = useRef(0);
+  useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
   useEffect(() => {
     const el = boxRef.current;
     if (!el) return;
@@ -1689,7 +1803,33 @@ function DashboardGrid({
   const colW = (width - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS;
   const unitX = colW + GRID_GAP,
     unitY = GRID_ROW_H + GRID_GAP;
-  const apply = (id, mode, start, dc, dr) => {
+
+  // 마우스가 가리키는 격자 칸 (위젯 모서리가 아니라 손가락 위치로 판단)
+  const cellAt = (clientX, clientY) => {
+    const r = boxRef.current.getBoundingClientRect();
+    return {
+      c: Math.floor((clientX - r.left) / unitX),
+      r: Math.floor((clientY - r.top) / unitY)
+    };
+  };
+  const apply = (id, mode, start, dc, dr, cell) => {
+    if (mode === 'move' && cell) {
+      // 마우스 아래에 다른 위젯이 있으면 그 위젯과 자리를 맞바꿈
+      const target = layout.find(i => i.id !== id && cell.c >= i.x && cell.c < i.x + i.w && cell.r >= i.y && cell.r < i.y + i.h);
+      if (target) {
+        const a = clampItem({
+          ...start,
+          x: target.x,
+          y: target.y
+        });
+        const b = clampItem({
+          ...target,
+          x: start.x,
+          y: start.y
+        });
+        return settleLayout(layout.map(i => i.id === id ? a : i.id === target.id ? b : i), id);
+      }
+    }
     const cand = clampItem(mode === 'move' ? {
       ...start,
       x: start.x + dc,
@@ -1705,26 +1845,65 @@ function DashboardGrid({
     if (e.button !== 0) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
+    const start = layout.find(i => i.id === id);
     dragRef.current = {
       id,
       mode,
       sx: e.clientX,
       sy: e.clientY,
-      start: layout.find(i => i.id === id)
+      x: e.clientX,
+      y: e.clientY,
+      start
     };
     setActiveId(id);
+    setDrag({
+      id,
+      mode,
+      dx: 0,
+      dy: 0,
+      start
+    });
   };
   const onPointerMove = e => {
     const d = dragRef.current;
     if (!d) return;
-    setDraft(apply(d.id, d.mode, d.start, Math.round((e.clientX - d.sx) / unitX), Math.round((e.clientY - d.sy) / unitY)));
+    d.x = e.clientX;
+    d.y = e.clientY;
+    if (rafRef.current) return; // 화면 한 프레임에 한 번만 계산
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = 0;
+      const cur = dragRef.current;
+      if (!cur) return;
+      const dx = cur.x - cur.sx,
+        dy = cur.y - cur.sy;
+      const next = apply(cur.id, cur.mode, cur.start, Math.round(dx / unitX), Math.round(dy / unitY), cellAt(cur.x, cur.y));
+      setDraft(next);
+      setDrag({
+        id: cur.id,
+        mode: cur.mode,
+        dx,
+        dy,
+        start: cur.start
+      });
+    });
   };
-  const onPointerUp = () => {
-    if (!dragRef.current) return;
+  const onPointerUp = e => {
+    const d = dragRef.current;
+    if (!d) return;
+    cancelAnimationFrame(rafRef.current);
+    rafRef.current = 0;
     dragRef.current = null;
+    if (e?.type === 'pointerup') {
+      d.x = e.clientX;
+      d.y = e.clientY;
+    }
+    // 마지막 위치는 손을 뗀 지점에서 바로 계산 — 빠르게 끌면 프레임 갱신 전에 손을 떼서 저장이 빠지던 문제
+    const moved = d.x !== d.sx || d.y !== d.sy;
+    const next = moved ? apply(d.id, d.mode, d.start, Math.round((d.x - d.sx) / unitX), Math.round((d.y - d.sy) / unitY), cellAt(d.x, d.y)) : null;
     setActiveId(null);
-    if (draft) onChange(draft);
+    setDrag(null);
     setDraft(null);
+    if (next && JSON.stringify(next) !== JSON.stringify(layout)) onChange(next);
   };
   // 키보드: 화살표 = 이동, Shift+화살표 = 크기 조절
   const onKeyDown = (e, id) => {
@@ -1738,23 +1917,43 @@ function DashboardGrid({
     e.preventDefault();
     onChange(apply(id, e.shiftKey ? 'resize' : 'move', layout.find(i => i.id === id), delta[0], delta[1]));
   };
-  const ordered = [...shown].sort((a, b) => a.y - b.y || a.x - b.x);
+
+  // 격자 모드에서는 화면 요소 순서를 고정 — 끄는 중에 순서가 바뀌면 브라우저가 포인터를 놓쳐서 저장이 안 되던 원인
+  const ordered = stacked ? [...shown].sort((a, b) => a.y - b.y || a.x - b.x) : shown;
   const rows = Math.max(...shown.map(i => i.y + i.h));
+  const rectOf = it => ({
+    left: it.x * unitX,
+    top: it.y * unitY,
+    width: it.w * colW + (it.w - 1) * GRID_GAP,
+    height: it.h * GRID_ROW_H + (it.h - 1) * GRID_GAP
+  });
+  const ghost = drag && draft ? draft.find(i => i.id === drag.id) : null;
   return /*#__PURE__*/React.createElement("div", {
     ref: boxRef,
     className: `dgrid ${stacked ? 'is-stacked' : ''} ${editing && !stacked ? 'is-editing' : ''}`,
     style: stacked || !width ? undefined : {
       height: rows * unitY - GRID_GAP
     }
-  }, ordered.map(it => {
+  }, ghost && !stacked && /*#__PURE__*/React.createElement("div", {
+    className: "dgrid-ghost",
+    style: rectOf(ghost),
+    "aria-hidden": "true"
+  }), ordered.map(it => {
     const w = widgets[it.id];
     if (!w) return null;
-    const style = stacked || !width ? undefined : {
-      left: it.x * unitX,
-      top: it.y * unitY,
-      width: it.w * colW + (it.w - 1) * GRID_GAP,
-      height: it.h * GRID_ROW_H + (it.h - 1) * GRID_GAP
-    };
+    let style = stacked || !width ? undefined : rectOf(it);
+    if (style && drag && drag.id === it.id) {
+      const s = rectOf(drag.start);
+      style = drag.mode === 'move' ? {
+        ...s,
+        left: s.left + drag.dx,
+        top: Math.max(0, s.top + drag.dy)
+      } : {
+        ...s,
+        width: Math.max(GRID_MIN_W * unitX - GRID_GAP, s.width + drag.dx),
+        height: Math.max(GRID_MIN_H * unitY - GRID_GAP, s.height + drag.dy)
+      };
+    }
     return /*#__PURE__*/React.createElement("section", {
       key: it.id,
       "data-tone": WIDGET_TONES[it.id],
@@ -1769,6 +1968,7 @@ function DashboardGrid({
       onPointerMove: onPointerMove,
       onPointerUp: onPointerUp,
       onPointerCancel: onPointerUp,
+      onLostPointerCapture: onPointerUp,
       onKeyDown: e => onKeyDown(e, it.id)
     }, /*#__PURE__*/React.createElement(Icon, {
       name: "move",
@@ -1781,7 +1981,8 @@ function DashboardGrid({
       onPointerDown: e => onPointerDown(e, it.id, 'resize'),
       onPointerMove: onPointerMove,
       onPointerUp: onPointerUp,
-      onPointerCancel: onPointerUp
+      onPointerCancel: onPointerUp,
+      onLostPointerCapture: onPointerUp
     }, /*#__PURE__*/React.createElement(Icon, {
       name: "resize",
       size: 14
@@ -1914,7 +2115,45 @@ function DashboardPage() {
   let headline;
   if (holiday?.isHoliday) headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uC624\uB298\uC740 ", /*#__PURE__*/React.createElement("em", null, holiday.name), ", \uC26C\uB294 \uB0A0\uC774\uC5D0\uC694");else if (currentClass) headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uC9C0\uAE08\uC740 ", /*#__PURE__*/React.createElement("em", null, currentClass.period, "\uAD50\uC2DC ", currentClass.subject), ", ", currentClass.end - nowMin, "\uBD84 \uB0A8\uC558\uC5B4\uC694");else if (nextClass && nextClass === todaySchedule[0]) headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uC624\uB298 \uCCAB \uC218\uC5C5\uC740 ", /*#__PURE__*/React.createElement("em", null, nextClass.period, "\uAD50\uC2DC ", nextClass.subject), "\uC608\uC694");else if (nextClass) headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uB2E4\uC74C\uC740 ", /*#__PURE__*/React.createElement("em", null, nextClass.period, "\uAD50\uC2DC ", nextClass.subject), ", ", nextClass.start - nowMin, "\uBD84 \uB4A4\uC5D0 \uC2DC\uC791\uD574\uC694");else if (todaySchedule.length) headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uC624\uB298 \uC218\uC5C5\uC774 \uBAA8\uB450 \uB05D\uB0AC\uC5B4\uC694. \uC218\uACE0\uD588\uC5B4\uC694!");else headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uC624\uB298\uC740 \uB4F1\uB85D\uB41C \uC218\uC5C5\uC774 \uC5C6\uC5B4\uC694");
   const birthdayStudents = students.filter(s => isTodayBirthday(s.birthday));
-  const ddaySorted = [...ddays].sort((a, b) => new Date(a.date) - new Date(b.date));
+  // 20일 안의 학생 생일·구글 달력 일정을 자동으로 함께 보여줌 (열 때마다 계산, 직접 넣은 D-Day와 섞어 날짜순)
+  const AUTO_DDAY_LIMIT = 20;
+  const [calSoon, setCalSoon] = useState([]);
+  const [calProblem, setCalProblem] = useState(''); // 달력 일정을 못 가져온 이유 (조용히 빠지지 않게 위젯에 보여줌)
+  const calInputs = [settings?.calendarId1, settings?.calendarId2, settings?.calendarId3].filter(Boolean);
+  const calKey = (settings?.googleApiKey || '').trim();
+  useEffect(() => {
+    if (!calInputs.length) {
+      setCalSoon([]);
+      setCalProblem('');
+      return;
+    }
+    if (!calKey) {
+      setCalSoon([]);
+      setCalProblem('구글 달력 일정은 ⚙️ 설정에 Google API 키를 넣어야 함께 나와요.');
+      return;
+    }
+    let alive = true;
+    const from = new Date();
+    from.setHours(0, 0, 0, 0);
+    const to = new Date(from);
+    to.setDate(to.getDate() + AUTO_DDAY_LIMIT + 1);
+    fetchCalendarEvents(calInputs, calKey, from, to).then(evs => {
+      if (alive) {
+        setCalSoon(evs);
+        setCalProblem('');
+      }
+    }).catch(err => {
+      if (alive) {
+        setCalSoon([]);
+        setCalProblem(`구글 달력을 불러오지 못했어요 (${err.message}). API 키와 달력 ‘공개’ 설정을 확인해 주세요.`);
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, [calKey, calInputs.join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
+  const autoDays = useMemo(() => upcomingAutoDays(students, calSoon, new Date(), AUTO_DDAY_LIMIT), [students, calSoon]);
+  const ddaySorted = [...ddays, ...autoDays].sort((a, b) => new Date(a.date) - new Date(b.date));
   const firstUpcoming = ddaySorted.find(ev => !getDday(ev.date).startsWith('D+'));
   const handleAddDday = () => {
     if (!newDday.name || !newDday.date) {
@@ -2084,7 +2323,9 @@ function DashboardPage() {
         type: "button",
         className: "btn btn-primary btn-sm",
         onClick: handleAddDday
-      }, "\uCD94\uAC00")), ddaySorted.length === 0 ? /*#__PURE__*/React.createElement("div", {
+      }, "\uCD94\uAC00")), isAdmin && calProblem && /*#__PURE__*/React.createElement("p", {
+        className: "dday-cal-problem"
+      }, calProblem), ddaySorted.length === 0 ? /*#__PURE__*/React.createElement("div", {
         className: "wcard-empty"
       }, "\uB4F1\uB85D\uB41C D-Day\uAC00 \uC5C6\uC5B4\uC694.") : /*#__PURE__*/React.createElement("ul", {
         className: "dday-rows"
@@ -2099,7 +2340,9 @@ function DashboardPage() {
         className: "dday-title"
       }, ev.emoji ? `${ev.emoji} ` : '', ev.name), /*#__PURE__*/React.createElement("span", {
         className: "dday-when"
-      }, shortDate(ev.date))), isAdmin && /*#__PURE__*/React.createElement("button", {
+      }, shortDate(ev.date), ev.auto && /*#__PURE__*/React.createElement("span", {
+        className: "dday-auto"
+      }, ev.auto))), isAdmin && !ev.auto && /*#__PURE__*/React.createElement("button", {
         type: "button",
         className: "icon-ghost",
         "aria-label": `${ev.name} 삭제`,
@@ -2485,7 +2728,7 @@ function StudentsPage() {
         number: i + 1,
         name: parts[0] || `학생${i + 1}`,
         gender,
-        birthday: parts[2] || (existing ? existing.birthday : ''),
+        birthday: normalizeBirthday(parts[2]) || (existing ? existing.birthday : ''),
         points: existing ? existing.points : 0,
         group: existing ? existing.group : Math.ceil((i + 1) / 4)
       };
@@ -2521,7 +2764,7 @@ function StudentsPage() {
           number: i + 1,
           name: row['이름'] || `학생${i + 1}`,
           gender,
-          birthday: row['생일'] || (existing ? existing.birthday : ''),
+          birthday: normalizeBirthday(row['생일']) || (existing ? existing.birthday : ''),
           parentPhone: row['연락처'] || (existing ? existing.parentPhone : ''),
           points: existing ? existing.points : 0,
           group: existing ? existing.group : Math.ceil((i + 1) / 4)
@@ -2681,7 +2924,7 @@ function StudentsPage() {
   }, filtered.map(s => /*#__PURE__*/React.createElement("li", {
     key: s.id,
     className: "stu-card",
-    "data-tone": teamTone(s.group)
+    "data-tone": genderTone(s.gender)
   }, /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "stu-card-main",
@@ -2694,7 +2937,7 @@ function StudentsPage() {
     className: "stu-name"
   }, s.name)), /*#__PURE__*/React.createElement("span", {
     className: "stu-meta"
-  }, [s.group && `${s.group}팀`, s.gender === 'F' ? '여' : '남', fmtBirthday(s.birthday)].filter(Boolean).join(' · ')), (s.allergies || s.healthNotes) && /*#__PURE__*/React.createElement("span", {
+  }, [s.gender === 'F' ? '여' : '남', fmtBirthday(s.birthday)].filter(Boolean).join(' · ')), (s.allergies || s.healthNotes) && /*#__PURE__*/React.createElement("span", {
     className: "stu-tags"
   }, s.allergies && /*#__PURE__*/React.createElement("span", {
     className: "stu-tag is-warn"
@@ -2755,9 +2998,15 @@ function StudentsPage() {
     className: "wcard-head"
   }, /*#__PURE__*/React.createElement("h2", {
     className: "wcard-title"
-  }, "\uC790\uB9AC \uBC30\uCE58\uB3C4"), isAdmin && /*#__PURE__*/React.createElement("span", {
+  }, "\uC790\uB9AC \uBC30\uCE58\uB3C4"), /*#__PURE__*/React.createElement("span", {
+    className: "seat-legend"
+  }, /*#__PURE__*/React.createElement("span", {
+    "data-tone": "tangerine"
+  }, "\uB0A8"), /*#__PURE__*/React.createElement("span", {
+    "data-tone": "coral"
+  }, "\uC5EC"), isAdmin && /*#__PURE__*/React.createElement("span", {
     className: "wcard-meta"
-  }, "\uC774\uB984\uD45C\uB97C \uB04C\uC5B4\uB2E4 \uB193\uC73C\uBA74 \uC790\uB9AC\uAC00 \uBC14\uB00C\uC5B4\uC694")), /*#__PURE__*/React.createElement("div", {
+  }, "\uC774\uB984\uD45C\uB97C \uB04C\uC5B4\uB2E4 \uB193\uC73C\uBA74 \uC790\uB9AC\uAC00 \uBC14\uB00C\uC5B4\uC694"))), /*#__PURE__*/React.createElement("div", {
     className: "wcard-body seating-container"
   }, /*#__PURE__*/React.createElement("div", {
     className: "teacher-desk"
@@ -2766,6 +3015,7 @@ function StudentsPage() {
   }, seatingList.map(s => /*#__PURE__*/React.createElement("div", {
     key: s.id,
     className: "seat occupied",
+    "data-tone": genderTone(s.gender),
     draggable: isAdmin,
     onDragStart: e => handleDragStartSeat(e, s),
     onDragEnd: handleDragEndSeat,
@@ -2777,7 +3027,7 @@ function StudentsPage() {
     }
   }, /*#__PURE__*/React.createElement("div", {
     className: "seat-number num"
-  }, s.number), /*#__PURE__*/React.createElement("div", {
+  }, s.number, " \xB7 ", s.gender === 'F' ? '여' : '남'), /*#__PURE__*/React.createElement("div", {
     className: "seat-name"
   }, s.name)))))), view === 'points' && /*#__PURE__*/React.createElement("section", {
     className: "wcard"
@@ -2809,8 +3059,7 @@ function StudentsPage() {
   }, i + 1), /*#__PURE__*/React.createElement("span", {
     className: "stu-rank-name"
   }, s.name, /*#__PURE__*/React.createElement("span", {
-    className: "stu-team",
-    "data-tone": teamTone(s.group)
+    className: "stu-team"
   }, s.group, "\uD300")), /*#__PURE__*/React.createElement("span", {
     className: "stu-rank-score"
   }, /*#__PURE__*/React.createElement("strong", {
@@ -2835,7 +3084,6 @@ function StudentsPage() {
     className: "stu-teams"
   }, groupPoints.map((g, i) => /*#__PURE__*/React.createElement("li", {
     key: g.groupId,
-    "data-tone": teamTone(g.groupId),
     className: `stu-team-card ${rankClass(i)}`,
     onDragOver: handleDragOverTeam,
     onDragLeave: handleDragLeaveTeam,
@@ -3276,11 +3524,13 @@ const STATUS_MAP = {
   }
 };
 const STATUS_KEYS = Object.keys(STATUS_MAP);
-const sameAtt = (a, b) => (a?.status || 'present') === (b?.status || 'present') && (a?.note || '') === (b?.note || '');
+const sameAtt = (a, b) => (a?.status || 'present') === (b?.status || 'present') && (a?.note || '') === (b?.note || '') && (a?.reason || '') === (b?.reason || '');
+// NEIS 출결 구분 — 결석·지각·조퇴마다 이 넷 중 하나로 입력함
+const ATT_REASONS = ['질병', '미인정', '기타', '출석인정'];
+const NEIS_TYPES = ['absent', 'late', 'early-leave'];
 function AttendancePage() {
   const {
     state,
-    updateAttendance,
     loadAttendanceByDate,
     loadMonthlyAttendance,
     saveAttendanceDay,
@@ -3304,6 +3554,15 @@ function AttendancePage() {
   const [selected, setSelected] = useState(() => new Set());
   const [noteFor, setNoteFor] = useState(null);
   const [noteText, setNoteText] = useState('');
+  const [noteReason, setNoteReason] = useState('');
+  // 월별 현황에서 고친 칸(저장 전): { 'YYYY-MM-DD': { 학생id: 상태 } }
+  const [monthDraft, setMonthDraft] = useState({});
+  const monthChanges = Object.entries(monthDraft).flatMap(([d, recs]) => Object.entries(recs).filter(([id, st]) => (monthlyAttendance[d]?.[id]?.status || null) !== st).map(([id, st]) => ({
+    date: d,
+    id,
+    status: st
+  })));
+  const monthDirty = monthChanges.length > 0;
   const baseOf = id => attendance[id] || {
     status: 'present',
     note: ''
@@ -3317,27 +3576,85 @@ function AttendancePage() {
     setNoteFor(null);
   }, [selectedAttendanceDate]);
   useEffect(() => {
-    if (!dirty) return;
+    if (!dirty && !monthDirty) return;
     const warn = e => {
       e.preventDefault();
       e.returnValue = '';
     };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty]);
+  }, [dirty, monthDirty]);
+
+  // 드롭다운 밖을 누르거나 Esc 를 누르면 닫힘
+  useEffect(() => {
+    if (!monthlyActiveCell) return;
+    const onDown = e => {
+      if (!e.target.closest('.monthly-cell.active')) setMonthlyActiveCell(null);
+    };
+    const onKey = e => {
+      if (e.key === 'Escape') setMonthlyActiveCell(null);
+    };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [monthlyActiveCell]);
   const handleDateChange = e => {
     if (dirty && !confirm('저장하지 않은 출석 변경이 있어요. 날짜를 바꾸면 사라집니다. 계속할까요?')) return;
     loadAttendanceByDate(e.target.value);
   };
+  // 칸을 고르면 표시만 바뀌고, 아래 '저장'을 눌러야 db에 들어감
   const handleMonthlyStatus = (studentId, date, status) => {
     if (!isAdmin) {
       showToast('선생님 모드에서만 수정할 수 있습니다.', 'error');
       return;
     }
-    updateAttendance(studentId, status, monthlyAttendance[date]?.[studentId]?.note || '', date);
-    const s = students.find(st => st.id === studentId);
-    showToast(`${s.name} (${date.slice(5).replace('-', '/')}) → ${STATUS_MAP[status].label}`, 'success');
+    setMonthDraft(prev => ({
+      ...prev,
+      [date]: {
+        ...(prev[date] || {}),
+        [studentId]: status
+      }
+    }));
     setMonthlyActiveCell(null);
+  };
+  const saveMonth = () => {
+    const byDate = {};
+    monthChanges.forEach(({
+      date,
+      id,
+      status
+    }) => {
+      const old = monthlyAttendance[date]?.[id] || {};
+      const absent = status !== 'present';
+      (byDate[date] = byDate[date] || {})[id] = {
+        ...old,
+        status,
+        note: absent ? old.note || '' : '',
+        reason: absent ? old.reason || '' : ''
+      };
+    });
+    Object.entries(byDate).forEach(([date, records]) => saveAttendanceDay(date, records));
+    showToast(`출석 ${monthChanges.length}칸을 저장했습니다.`, 'success');
+    setMonthDraft({});
+  };
+  const confirmLeaveMonth = () => !monthDirty || confirm('저장하지 않은 월별 출석 변경이 있어요. 이동하면 사라집니다. 계속할까요?');
+  const changeMonth = delta => {
+    if (!confirmLeaveMonth()) return;
+    setMonthDraft({});
+    setMonthlyActiveCell(null);
+    setMonthYear(({
+      year,
+      month
+    }) => {
+      const m = month + delta;
+      return {
+        year: year + Math.floor(m / 12),
+        month: (m % 12 + 12) % 12
+      };
+    });
   };
   useEffect(() => {
     if (viewMode === 'monthly') loadMonthlyAttendance(monthYear.year, monthYear.month);
@@ -3358,9 +3675,14 @@ function AttendancePage() {
       };
       selected.forEach(id => {
         const cur = next[id] || baseOf(id);
-        next[id] = {
+        next[id] = status === 'present' ? {
           status,
-          note: status === 'present' ? '' : cur.note || ''
+          note: '',
+          reason: ''
+        } : {
+          status,
+          note: cur.note || '',
+          reason: cur.reason || ''
         };
       });
       return next;
@@ -3370,13 +3692,15 @@ function AttendancePage() {
   const openNote = id => {
     setNoteFor(id);
     setNoteText(current(id).note || '');
+    setNoteReason(current(id).reason || '');
   };
   const saveNote = () => {
     setDraft(prev => ({
       ...prev,
       [noteFor]: {
         ...current(noteFor),
-        note: noteText.trim()
+        note: noteText.trim(),
+        reason: noteReason
       }
     }));
     setNoteFor(null);
@@ -3391,9 +3715,11 @@ function AttendancePage() {
     const records = {};
     students.forEach(s => {
       const a = current(s.id);
+      const absent = a.status !== 'present';
       records[s.id] = {
         status: a.status,
-        note: a.status === 'present' ? '' : a.note || '',
+        note: absent ? a.note || '' : '',
+        reason: absent ? a.reason || '' : '',
         id: baseOf(s.id).id
       };
     });
@@ -3433,7 +3759,12 @@ function AttendancePage() {
   }, /*#__PURE__*/React.createElement("button", {
     type: "button",
     "aria-pressed": viewMode === 'daily',
-    onClick: () => setViewMode('daily')
+    onClick: () => {
+      if (viewMode === 'daily' || !confirmLeaveMonth()) return;
+      setMonthDraft({});
+      setMonthlyActiveCell(null);
+      setViewMode('daily');
+    }
   }, "\uC77C\uBCC4 \uCD9C\uC11D"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     "aria-pressed": viewMode === 'monthly',
@@ -3515,14 +3846,20 @@ function AttendancePage() {
       "aria-label": "\uBCC0\uACBD\uB428"
     }))), needsNote && (isAdmin ? /*#__PURE__*/React.createElement("button", {
       type: "button",
-      className: `att-note-btn ${a.note ? 'has-note' : ''}`,
+      className: `att-note-btn ${a.note || a.reason ? 'has-note' : ''}`,
       onClick: () => openNote(s.id)
     }, /*#__PURE__*/React.createElement(Icon, {
       name: "edit",
       size: 14
-    }), a.note || '사유 쓰기') : a.note ? /*#__PURE__*/React.createElement("span", {
+    }), a.reason ? /*#__PURE__*/React.createElement("span", {
+      className: "att-reason"
+    }, a.reason) : /*#__PURE__*/React.createElement("span", {
+      className: "att-reason is-missing"
+    }, "\uAD6C\uBD84 \uC120\uD0DD"), a.note || (a.reason ? '' : '사유 적기')) : a.note || a.reason ? /*#__PURE__*/React.createElement("span", {
       className: "att-note-btn has-note"
-    }, a.note) : null));
+    }, a.reason && /*#__PURE__*/React.createElement("span", {
+      className: "att-reason"
+    }, a.reason), a.note) : null));
   })), isAdmin && /*#__PURE__*/React.createElement("div", {
     className: `att-submit ${dirty ? 'is-dirty' : ''}`
   }, /*#__PURE__*/React.createElement("span", {
@@ -3560,10 +3897,22 @@ function AttendancePage() {
     onClick: () => setNoteFor(null)
   }, "\xD7")), /*#__PURE__*/React.createElement("div", {
     className: "modal-body"
-  }, /*#__PURE__*/React.createElement("label", {
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "att-reason-label",
+    id: "att-reason-label"
+  }, "NEIS \uAD6C\uBD84"), /*#__PURE__*/React.createElement("div", {
+    className: "mode-switch att-reason-pick",
+    role: "group",
+    "aria-labelledby": "att-reason-label"
+  }, ATT_REASONS.map(r => /*#__PURE__*/React.createElement("button", {
+    key: r,
+    type: "button",
+    "aria-pressed": noteReason === r,
+    onClick: () => setNoteReason(r)
+  }, r))), /*#__PURE__*/React.createElement("label", {
     htmlFor: "att-note-text",
-    className: "sr-only"
-  }, "\uC0AC\uC720"), /*#__PURE__*/React.createElement("textarea", {
+    className: "att-reason-label"
+  }, "\uC0AC\uC720 (\uD2B9\uAE30\uC0AC\uD56D)"), /*#__PURE__*/React.createElement("textarea", {
     id: "att-note-text",
     className: "form-input",
     rows: "3",
@@ -3588,7 +3937,7 @@ function AttendancePage() {
     type: "button",
     className: "btn btn-primary",
     onClick: saveNote
-  }, "\uC0AC\uC720 \uC801\uAE30"))))) : /*#__PURE__*/React.createElement("div", {
+  }, "\uC800\uC7A5"))))) : /*#__PURE__*/React.createElement("div", {
     className: "monthly-attendance"
   }, /*#__PURE__*/React.createElement("div", {
     className: "wk-nav att-month-nav"
@@ -3596,15 +3945,7 @@ function AttendancePage() {
     type: "button",
     className: "round-btn",
     "aria-label": "\uC774\uC804 \uB2EC",
-    onClick: () => {
-      if (monthYear.month === 0) setMonthYear({
-        year: monthYear.year - 1,
-        month: 11
-      });else setMonthYear({
-        ...monthYear,
-        month: monthYear.month - 1
-      });
-    }
+    onClick: () => changeMonth(-1)
   }, /*#__PURE__*/React.createElement(Icon, {
     name: "chevron",
     size: 18
@@ -3612,15 +3953,7 @@ function AttendancePage() {
     type: "button",
     className: "round-btn wk-next",
     "aria-label": "\uB2E4\uC74C \uB2EC",
-    onClick: () => {
-      if (monthYear.month === 11) setMonthYear({
-        year: monthYear.year + 1,
-        month: 0
-      });else setMonthYear({
-        ...monthYear,
-        month: monthYear.month + 1
-      });
-    }
+    onClick: () => changeMonth(1)
   }, /*#__PURE__*/React.createElement(Icon, {
     name: "chevron",
     size: 18
@@ -3663,12 +3996,15 @@ function AttendancePage() {
     className: "sticky-col-name"
   }, s.name), monthDays.map(d => {
     const record = monthlyAttendance[d]?.[s.id];
-    const status = record?.status || null;
+    const saved = record?.status || null;
+    const pending = monthDraft[d]?.[s.id];
+    const status = pending || saved;
+    const isChanged = !!pending && pending !== saved;
     const isCellActive = monthlyActiveCell?.studentId === s.id && monthlyActiveCell?.date === d;
     return /*#__PURE__*/React.createElement("td", {
       key: d,
-      className: `monthly-cell ${status || 'no-data'} ${isCellActive ? 'active' : ''}`,
-      title: record?.note || '',
+      className: `monthly-cell ${status || 'no-data'} ${isCellActive ? 'active' : ''} ${isChanged ? 'is-changed' : ''}`,
+      title: [record?.reason, record?.note].filter(Boolean).join(' · '),
       onClick: () => {
         if (isAdmin) setMonthlyActiveCell(isCellActive ? null : {
           studentId: s.id,
@@ -3693,7 +4029,141 @@ function AttendancePage() {
       className: `status-option ${status === k ? 'active' : ''}`,
       onClick: () => handleMonthlyStatus(s.id, d, k)
     }, STATUS_MAP[k].label))));
-  }))))))));
+  })))))), isAdmin && /*#__PURE__*/React.createElement("div", {
+    className: `att-submit ${monthDirty ? 'is-dirty' : ''}`
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "att-submit-text"
+  }, monthDirty ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("strong", {
+    className: "num"
+  }, monthChanges.length), "\uCE78\uC774 \uBC14\uB00C\uC5C8\uC5B4\uC694. \uC800\uC7A5\uC744 \uB20C\uB7EC\uC57C \uBC18\uC601\uB3FC\uC694.") : '칸을 눌러 출석을 고친 뒤 저장을 누르세요.'), /*#__PURE__*/React.createElement("div", {
+    className: "att-submit-actions"
+  }, monthDirty && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-secondary",
+    onClick: () => setMonthDraft({})
+  }, "\uB418\uB3CC\uB9AC\uAE30"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-primary",
+    onClick: saveMonth,
+    disabled: !monthDirty
+  }, "\uC800\uC7A5"))), /*#__PURE__*/React.createElement(NeisSummary, {
+    students: students,
+    monthlyAttendance: monthlyAttendance,
+    monthDays: monthDays,
+    year: monthYear.year,
+    month: monthYear.month
+  })));
+}
+
+/* NEIS 입력용 월별 출결 요약 — NEIS에 자동으로 넣지는 않고, 보면서 옮겨 적기 쉽게 정리 + 엑셀 */
+function NeisSummary({
+  students,
+  monthlyAttendance,
+  monthDays,
+  year,
+  month
+}) {
+  const rows = students.map(s => {
+    const counts = {};
+    const notes = [];
+    let missing = 0;
+    NEIS_TYPES.forEach(t => ATT_REASONS.forEach(r => {
+      counts[`${t}:${r}`] = 0;
+    }));
+    monthDays.forEach(d => {
+      const rec = monthlyAttendance[d]?.[s.id];
+      if (!rec || !NEIS_TYPES.includes(rec.status)) return;
+      if (rec.reason) counts[`${rec.status}:${rec.reason}`]++;else missing++;
+      notes.push(`${+d.slice(5, 7)}/${+d.slice(8)} ${STATUS_MAP[rec.status].label}(${rec.reason || '구분 없음'})${rec.note ? ' ' + rec.note : ''}`);
+    });
+    return {
+      s,
+      counts,
+      notes,
+      missing
+    };
+  }).filter(r => r.notes.length);
+  const missingTotal = rows.reduce((n, r) => n + r.missing, 0);
+  const title = `${year}년 ${month + 1}월 출결 요약`;
+  const downloadExcel = () => {
+    const head1 = ['번호', '이름', ...NEIS_TYPES.flatMap(t => ATT_REASONS.map((r, i) => i === 0 ? STATUS_MAP[t].label : '')), '특기사항'];
+    const head2 = ['', '', ...NEIS_TYPES.flatMap(() => ATT_REASONS), ''];
+    const body = rows.map(r => [r.s.number, r.s.name, ...NEIS_TYPES.flatMap(t => ATT_REASONS.map(x => r.counts[`${t}:${x}`] || '')), r.notes.join(', ')]);
+    const ws = XLSX.utils.aoa_to_sheet([[title], head1, head2, ...body]);
+    ws['!merges'] = NEIS_TYPES.map((t, i) => ({
+      s: {
+        r: 1,
+        c: 2 + i * 4
+      },
+      e: {
+        r: 1,
+        c: 5 + i * 4
+      }
+    }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '출결요약');
+    XLSX.writeFile(wb, `출결요약_${year}-${String(month + 1).padStart(2, '0')}.xlsx`);
+  };
+  return /*#__PURE__*/React.createElement("section", {
+    className: "neis-sum",
+    "aria-labelledby": "neis-sum-title"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "neis-sum-head"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h2", {
+    id: "neis-sum-title",
+    className: "wcard-title"
+  }, "NEIS \uC785\uB825\uC6A9 \uC694\uC57D"), /*#__PURE__*/React.createElement("p", {
+    className: "neis-sum-sub"
+  }, "\uACB0\uC11D\xB7\uC9C0\uAC01\xB7\uC870\uD1F4\uB97C NEIS \uAD6C\uBD84(\uC9C8\uBCD1\xB7\uBBF8\uC778\uC815\xB7\uAE30\uD0C0\xB7\uCD9C\uC11D\uC778\uC815)\uBCC4\uB85C \uC14C\uC5B4\uC694. NEIS \uCD9C\uACB0 \uD654\uBA74\uC5D0 \uBCF4\uBA74\uC11C \uC62E\uACA8 \uC801\uC73C\uC138\uC694.")), /*#__PURE__*/React.createElement("div", {
+    className: "neis-sum-actions"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-secondary btn-sm",
+    onClick: () => window.print()
+  }, "\uC778\uC1C4"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-primary btn-sm",
+    onClick: downloadExcel,
+    disabled: !rows.length
+  }, "\uC5D1\uC140 \uBC1B\uAE30"))), missingTotal > 0 && /*#__PURE__*/React.createElement("p", {
+    className: "neis-sum-warn"
+  }, "NEIS \uAD6C\uBD84\uC774 \uBE44\uC5B4 \uC788\uB294 \uAE30\uB85D\uC774 ", /*#__PURE__*/React.createElement("strong", {
+    className: "num"
+  }, missingTotal), "\uAC74 \uC788\uC5B4\uC694. \uC77C\uBCC4 \uCD9C\uC11D\uC5D0\uC11C \uC0AC\uC720\uB97C \uB20C\uB7EC \uAD6C\uBD84\uC744 \uACE8\uB77C \uC8FC\uC138\uC694."), rows.length === 0 ? /*#__PURE__*/React.createElement("p", {
+    className: "neis-sum-empty"
+  }, "\uC774\uBC88 \uB2EC\uC5D0\uB294 \uACB0\uC11D\xB7\uC9C0\uAC01\xB7\uC870\uD1F4 \uAE30\uB85D\uC774 \uC5C6\uC5B4\uC694.") : /*#__PURE__*/React.createElement("div", {
+    className: "neis-sum-scroll"
+  }, /*#__PURE__*/React.createElement("table", {
+    className: "neis-sum-table"
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
+    rowSpan: "2"
+  }, "\uBC88\uD638"), /*#__PURE__*/React.createElement("th", {
+    rowSpan: "2"
+  }, "\uC774\uB984"), NEIS_TYPES.map(t => /*#__PURE__*/React.createElement("th", {
+    key: t,
+    colSpan: "4",
+    className: `is-${t}`
+  }, STATUS_MAP[t].label)), /*#__PURE__*/React.createElement("th", {
+    rowSpan: "2",
+    className: "neis-sum-note"
+  }, "\uD2B9\uAE30\uC0AC\uD56D")), /*#__PURE__*/React.createElement("tr", null, NEIS_TYPES.flatMap(t => ATT_REASONS.map(r => /*#__PURE__*/React.createElement("th", {
+    key: `${t}-${r}`,
+    className: "neis-sum-sub-h"
+  }, r))))), /*#__PURE__*/React.createElement("tbody", null, rows.map(r => /*#__PURE__*/React.createElement("tr", {
+    key: r.s.id
+  }, /*#__PURE__*/React.createElement("td", {
+    className: "num"
+  }, r.s.number), /*#__PURE__*/React.createElement("td", {
+    className: "neis-sum-name"
+  }, r.s.name), NEIS_TYPES.flatMap(t => ATT_REASONS.map(x => {
+    const n = r.counts[`${t}:${x}`];
+    return /*#__PURE__*/React.createElement("td", {
+      key: `${t}-${x}`,
+      className: `num ${n ? 'has-n' : ''}`
+    }, n || '');
+  })), /*#__PURE__*/React.createElement("td", {
+    className: "neis-sum-note"
+  }, r.notes.join(', '))))))));
 }
 
 /* ===================================================================
@@ -4046,13 +4516,7 @@ function CalendarPage() {
     let baseUrl = 'https://calendar.google.com/calendar/embed?ctz=Asia%2FSeoul&showPrint=0&showCalendars=0&showTz=0&mode=MONTH';
     const colors = ['%23039BE5', '%23D50000', '%230B8043'];
     cals.forEach((input, index) => {
-      const srcMatch = input.match(/src="([^"]+)"/);
-      let extracted = srcMatch ? srcMatch[1] : input.trim();
-      let calId = '';
-      if (extracted.includes('calendar.google.com') && extracted.includes('src=')) {
-        const m = extracted.match(/src=([^&]+)/);
-        if (m) calId = decodeURIComponent(m[1]);
-      } else calId = extracted;
+      const calId = extractCalendarId(input);
       if (calId) baseUrl += `&src=${encodeURIComponent(calId)}&color=${colors[index % colors.length]}`;
     });
     return baseUrl;
@@ -4150,6 +4614,7 @@ function ToolsPage() {
     setPickerResult('?');
   };
   const [timerMode, setTimerMode] = useState('timer');
+  const [timerActivity, setTimerActivity] = useState(''); // 지금 할 활동 이름 (타이머 위에 크게)
   const [timerSeconds, setTimerSeconds] = useState(300);
   const [timerRunning, setTimerRunning] = useState(false);
   const [timerElapsed, setTimerElapsed] = useState(0);
@@ -4281,12 +4746,50 @@ function ToolsPage() {
     deletePoll(pollId);
     showToast('투표가 삭제되었습니다.', 'success');
   };
+
+  // 도구 카드 하나를 창 전체로 키움(같은 화면 요소라 타이머·뽑기가 끊기지 않음). 브라우저 전체화면은 되면 덤으로 켬.
+  const [fsTool, setFsTool] = useState(null);
+  const openFull = id => {
+    setFsTool(id);
+    document.documentElement.requestFullscreen?.().catch(() => {});
+  };
+  const closeFull = () => {
+    setFsTool(null);
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  };
+  useEffect(() => {
+    if (!fsTool) return;
+    const onKey = e => {
+      if (e.key === 'Escape') closeFull();
+    };
+    const onFs = () => {
+      if (!document.fullscreenElement) setFsTool(null);
+    }; // 브라우저 전체화면을 Esc로 끄면 같이 작게
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('fullscreenchange', onFs);
+    document.body.classList.add('has-full-tool');
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('fullscreenchange', onFs);
+      document.body.classList.remove('has-full-tool');
+    };
+  }, [fsTool]);
+  const fsButton = id => /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "tool-fs-btn",
+    "aria-pressed": fsTool === id,
+    onClick: () => fsTool === id ? closeFull() : openFull(id)
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: fsTool === id ? 'shrink' : 'expand',
+    size: 16
+  }), fsTool === id ? '작게 보기' : '전체화면');
   return /*#__PURE__*/React.createElement("div", {
     className: "tools-page"
   }, /*#__PURE__*/React.createElement("div", {
     className: "tools-grid"
   }, /*#__PURE__*/React.createElement("div", {
-    className: `tool-card ${!isAdmin ? 'disabled-tool' : ''}`
+    "data-tool": "picker",
+    className: `tool-card ${!isAdmin ? 'disabled-tool' : ''} ${fsTool === 'picker' ? 'is-full' : ''}`
   }, /*#__PURE__*/React.createElement("div", {
     className: "tool-card-header"
   }, /*#__PURE__*/React.createElement("span", {
@@ -4295,7 +4798,7 @@ function ToolsPage() {
     className: "tool-title"
   }, "\uB79C\uB364 \uBF51\uAE30"), /*#__PURE__*/React.createElement("div", {
     className: "tool-desc"
-  }, "\uBC1C\uD45C\uC790\uB97C \uB79C\uB364\uC73C\uB85C \uC120\uD0DD\uD574\uC694"))), /*#__PURE__*/React.createElement("div", {
+  }, "\uBC1C\uD45C\uC790\uB97C \uB79C\uB364\uC73C\uB85C \uC120\uD0DD\uD574\uC694")), isAdmin && fsButton('picker')), /*#__PURE__*/React.createElement("div", {
     className: "picker-container"
   }, /*#__PURE__*/React.createElement("div", {
     className: "roulette-wheel"
@@ -4332,7 +4835,8 @@ function ToolsPage() {
     key: i,
     className: "picked-badge"
   }, s.name))))), /*#__PURE__*/React.createElement("div", {
-    className: `tool-card ${!isAdmin ? 'disabled-tool' : ''}`
+    "data-tool": "timer",
+    className: `tool-card ${!isAdmin ? 'disabled-tool' : ''} ${fsTool === 'timer' ? 'is-full' : ''}`
   }, /*#__PURE__*/React.createElement("div", {
     className: "tool-card-header"
   }, /*#__PURE__*/React.createElement("span", {
@@ -4341,9 +4845,17 @@ function ToolsPage() {
     className: "tool-title"
   }, "\uD0C0\uC774\uBA38 / \uC2A4\uD1B1\uC6CC\uCE58"), /*#__PURE__*/React.createElement("div", {
     className: "tool-desc"
-  }, "\uD65C\uB3D9 \uC2DC\uAC04\uC744 \uAD00\uB9AC\uD574\uC694"))), /*#__PURE__*/React.createElement("div", {
+  }, "\uD65C\uB3D9 \uC2DC\uAC04\uC744 \uAD00\uB9AC\uD574\uC694")), isAdmin && fsButton('timer')), /*#__PURE__*/React.createElement("div", {
     className: "timer-container"
-  }, /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "text",
+    className: "timer-activity",
+    "aria-label": "\uD65C\uB3D9 \uC774\uB984",
+    placeholder: "\uBB34\uC5C7\uC744 \uD560 \uC2DC\uAC04\uC778\uAC00\uC694? (\uC608: \uBAA8\uB460 \uD1A0\uC758)",
+    maxLength: 40,
+    value: timerActivity,
+    onChange: e => setTimerActivity(e.target.value)
+  }), /*#__PURE__*/React.createElement("div", {
     className: "timer-mode-toggle"
   }, /*#__PURE__*/React.createElement("button", {
     className: `timer-mode-btn ${timerMode === 'timer' ? 'active' : ''}`,
@@ -4406,7 +4918,8 @@ function ToolsPage() {
       color: 'white'
     }
   }, "\u21BA \uCD08\uAE30\uD654")))), /*#__PURE__*/React.createElement("div", {
-    className: `tool-card ${!isAdmin ? 'disabled-tool' : ''}`
+    "data-tool": "groups",
+    className: `tool-card ${!isAdmin ? 'disabled-tool' : ''} ${fsTool === 'groups' ? 'is-full' : ''}`
   }, /*#__PURE__*/React.createElement("div", {
     className: "tool-card-header"
   }, /*#__PURE__*/React.createElement("span", {
@@ -4415,7 +4928,7 @@ function ToolsPage() {
     className: "tool-title"
   }, "\uD300 \uD3B8\uC131"), /*#__PURE__*/React.createElement("div", {
     className: "tool-desc"
-  }, "\uB79C\uB364\uC73C\uB85C \uD300\uC744 \uB098\uB220\uC694"))), /*#__PURE__*/React.createElement("div", {
+  }, "\uB79C\uB364\uC73C\uB85C \uD300\uC744 \uB098\uB220\uC694")), isAdmin && fsButton('groups')), /*#__PURE__*/React.createElement("div", {
     className: "group-maker"
   }, isAdmin && /*#__PURE__*/React.createElement("div", {
     className: "group-settings"
@@ -4446,7 +4959,8 @@ function ToolsPage() {
     key: s.id,
     className: "group-member"
   }, /*#__PURE__*/React.createElement("span", null, s.gender === 'M' ? '👦' : '👧'), /*#__PURE__*/React.createElement("span", null, s.number, ". ", s.name))))))))), /*#__PURE__*/React.createElement("div", {
-    className: "tool-card"
+    "data-tool": "poll",
+    className: `tool-card ${fsTool === 'poll' ? 'is-full' : ''}`
   }, /*#__PURE__*/React.createElement("div", {
     className: "tool-card-header"
   }, /*#__PURE__*/React.createElement("span", {
@@ -4455,7 +4969,7 @@ function ToolsPage() {
     className: "tool-title"
   }, "\uD22C\uD45C / \uC124\uBB38"), /*#__PURE__*/React.createElement("div", {
     className: "tool-desc"
-  }, "\uD559\uAE09 \uC758\uACAC\uC744 \uBAA8\uC544\uC694"))), /*#__PURE__*/React.createElement("div", {
+  }, "\uD559\uAE09 \uC758\uACAC\uC744 \uBAA8\uC544\uC694")), fsButton('poll')), /*#__PURE__*/React.createElement("div", {
     className: "poll-container"
   }, isAdmin && /*#__PURE__*/React.createElement("div", {
     className: "poll-form"
@@ -4552,7 +5066,8 @@ function WeeklyPlanPage() {
   } = useApp();
   const {
     weeklyPlans,
-    isAdmin
+    isAdmin,
+    settings
   } = state;
   const [currentDate, setCurrentDate] = useState(new Date());
   const [editing, setEditing] = useState(null);
@@ -4604,6 +5119,59 @@ function WeeklyPlanPage() {
     setEditing(null);
     showToast('주간 일정이 저장되었습니다.', 'success');
   }, [saveWeeklyPlan, weekKey, editing, editSubject, editContent, showToast]);
+
+  // 구글 달력 일정: 이 주(월~금)를 읽어 교시 칸·요일 머리에 함께 표시 (주간 일정 데이터는 건드리지 않음)
+  const calInputs = [settings?.calendarId1, settings?.calendarId2, settings?.calendarId3].filter(Boolean);
+  const calKey = (settings?.googleApiKey || '').trim();
+  const [cal, setCal] = useState({
+    status: 'off',
+    cells: {},
+    dayNotes: {},
+    count: 0
+  });
+  useEffect(() => {
+    if (!calKey || !calInputs.length) {
+      setCal({
+        status: 'off',
+        cells: {},
+        dayNotes: {},
+        count: 0
+      });
+      return;
+    }
+    let alive = true;
+    const end = new Date(weekStart);
+    end.setDate(end.getDate() + 5);
+    setCal(c => ({
+      ...c,
+      status: 'loading'
+    }));
+    fetchCalendarEvents(calInputs, calKey, weekStart, end).then(evs => {
+      if (alive) setCal({
+        status: 'ok',
+        count: evs.length,
+        ...placeEventsInWeek(evs, dayDates.map(d => ({
+          day: d.day,
+          iso: d.isoDate
+        })), PERIOD_SLOTS)
+      });
+    }).catch(err => {
+      if (alive) setCal({
+        status: 'error',
+        error: err.message,
+        cells: {},
+        dayNotes: {},
+        count: 0
+      });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [weekKey, calKey, calInputs.join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
+  const calLines = key => (cal.cells[key] || []).map((t, i) => /*#__PURE__*/React.createElement("span", {
+    key: i,
+    className: "wk-cal"
+  }, t));
   const sameMonth = weekStart.getMonth() === weekEndDate.getMonth();
   const rangeLabel = `${weekStart.getMonth() + 1}월 ${weekStart.getDate()}일 – ${sameMonth ? '' : `${weekEndDate.getMonth() + 1}월 `}${weekEndDate.getDate()}일`;
   const renderRow = p => /*#__PURE__*/React.createElement("tr", {
@@ -4664,14 +5232,14 @@ function WeeklyPlanPage() {
       className: "wk-subject"
     }, plan.subject), plan.content && /*#__PURE__*/React.createElement("span", {
       className: "wk-content"
-    }, plan.content))) : /*#__PURE__*/React.createElement("div", {
+    }, plan.content)), calLines(`${dd.day}-${p}`)) : /*#__PURE__*/React.createElement("div", {
       "data-tone": subjectTone(plan.subject),
       className: `wk-plan ${isEmpty ? 'is-empty' : ''}`
     }, plan.subject && /*#__PURE__*/React.createElement("span", {
       className: "wk-subject"
     }, plan.subject), plan.content && /*#__PURE__*/React.createElement("span", {
       className: "wk-content"
-    }, plan.content)));
+    }, plan.content), calLines(`${dd.day}-${p}`)));
   }));
   return /*#__PURE__*/React.createElement("div", {
     className: "wk"
@@ -4708,7 +5276,27 @@ function WeeklyPlanPage() {
     size: 18
   })))), isAdmin && /*#__PURE__*/React.createElement("p", {
     className: "dash-edit-hint"
-  }, "\uCE78\uC744 \uB20C\uB7EC \uACFC\uBAA9\uACFC \uD559\uC2B5 \uB0B4\uC6A9\uC744 \uC801\uACE0, Enter\uB85C \uC800\uC7A5\uD558\uC138\uC694."), /*#__PURE__*/React.createElement("div", {
+  }, "\uCE78\uC744 \uB20C\uB7EC \uACFC\uBAA9\uACFC \uD559\uC2B5 \uB0B4\uC6A9\uC744 \uC801\uACE0, Enter\uB85C \uC800\uC7A5\uD558\uC138\uC694."), cal.status === 'ok' && /*#__PURE__*/React.createElement("p", {
+    className: "wk-cal-status"
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "calendar",
+    size: 16
+  }), cal.count ? `구글 달력 일정 ${cal.count}개를 함께 보여 주고 있어요.` : '이번 주에는 구글 달력 일정이 없어요.'), cal.status === 'loading' && /*#__PURE__*/React.createElement("p", {
+    className: "wk-cal-status"
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "calendar",
+    size: 16
+  }), "\uAD6C\uAE00 \uB2EC\uB825 \uC77C\uC815\uC744 \uBD88\uB7EC\uC624\uB294 \uC911\u2026"), cal.status === 'error' && /*#__PURE__*/React.createElement("p", {
+    className: "wk-cal-status is-error"
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "calendar",
+    size: 16
+  }), "\uAD6C\uAE00 \uB2EC\uB825\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC5B4\uC694 (", cal.error, "). \uC124\uC815\uC758 API \uD0A4\uC640 \uB2EC\uB825 \uACF5\uAC1C \uC5EC\uBD80\uB97C \uD655\uC778\uD574 \uC8FC\uC138\uC694."), cal.status === 'off' && isAdmin && /*#__PURE__*/React.createElement("p", {
+    className: "wk-cal-status"
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "calendar",
+    size: 16
+  }), "\u2699\uFE0F \uC124\uC815\uC5D0 \uAD6C\uAE00 \uB2EC\uB825\uACFC Google API \uD0A4\uB97C \uB123\uC73C\uBA74 \uB2EC\uB825 \uC77C\uC815\uC774 \uC774 \uD45C\uC5D0 \uD568\uAED8 \uB098\uC640\uC694."), /*#__PURE__*/React.createElement("div", {
     className: "wk-card"
   }, /*#__PURE__*/React.createElement("table", {
     className: "wk-table"
@@ -4723,7 +5311,10 @@ function WeeklyPlanPage() {
     className: "wk-day"
   }, dd.day), /*#__PURE__*/React.createElement("span", {
     className: "wk-date num"
-  }, dd.dateStr))))), /*#__PURE__*/React.createElement("tbody", null, WEEK_PERIODS.map(renderRow)))));
+  }, dd.dateStr), (cal.dayNotes[dd.day] || []).map((t, i) => /*#__PURE__*/React.createElement("span", {
+    key: i,
+    className: "wk-cal-day"
+  }, t)))))), /*#__PURE__*/React.createElement("tbody", null, WEEK_PERIODS.map(renderRow)))));
 }
 
 /* ===================================================================

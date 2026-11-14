@@ -141,14 +141,17 @@ if (location.search.includes('mock=1')) {
   MOCK_DATA.ddays = [{ id: 'd1', name: '현장체험학습', date: '2026-12-20', emoji: '🚌' }];
   MOCK_DATA.announcements = [{ id: 'a1', title: '테스트 공지', content: '목(mock) 모드 테스트용 공지입니다.', type: 'general', date: '2026-11-13' }];
   MOCK_DATA.settings.thermometerGoal = 100;
+  MOCK_DATA.settings.googleApiKey = "mock";
+  MOCK_DATA.settings.calendarId1 = 'ko.south_korea#holiday@group.v.calendar.google.com'; // 공개 공휴일 달력(확인용)
 
   const fakeHandle = {
     queryPermission: async () => 'granted',
     requestPermission: async () => 'granted',
     getFileHandle: async () => ({
-      getFile: async () => ({ text: async () => JSON.stringify(MOCK_DATA) }),
+      // 같은 탭에서 새로고침해도 남도록 sessionStorage에 둠 (탭을 닫으면 초기화)
+      getFile: async () => ({ text: async () => { try { return sessionStorage.getItem('mockDb') || JSON.stringify(MOCK_DATA); } catch { return JSON.stringify(MOCK_DATA); } } }),
       createWritable: async () => ({
-        write: async (text) => { MOCK_DATA = JSON.parse(text); },
+        write: async (text) => { MOCK_DATA = JSON.parse(text); try { sessionStorage.setItem('mockDb', text); } catch {} },
         close: async () => {},
       }),
     }),
@@ -236,9 +239,59 @@ function toISODate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// 생일을 "YYYY-MM-DD" 로 맞춤. 엑셀 날짜 칸은 숫자(1900년부터 센 날 수)로 들어오고,
+// 사람이 친 글자는 2014.3.15 / 2014/03/15 / 2014년 3월 15일 / 20140315 / 140315 처럼 제각각이라서.
+// 알아볼 수 없으면 원래 값을 그대로 돌려줘서 지우지는 않음.
+function normalizeBirthday(v) {
+  if (v === null || v === undefined || v === "") return "";
+  const iso = (y, m, d) => (m >= 1 && m <= 12 && d >= 1 && d <= 31) ? y + "-" + String(m).padStart(2, "0") + "-" + String(d).padStart(2, "0") : null;
+  if (typeof v === "number" && v > 0 && v < 100000) {
+    const dt = new Date(Date.UTC(1899, 11, 30) + Math.round(v) * 86400000);
+    return iso(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate()) || String(v);
+  }
+  if (v instanceof Date && !isNaN(v)) return iso(v.getFullYear(), v.getMonth() + 1, v.getDate());
+  const s = String(v).trim();
+  let m = s.match(/^(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
+  if (m) return iso(+m[1], +m[2], +m[3]) || s;
+  m = s.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (m) return iso(+m[1], +m[2], +m[3]) || s;
+  m = s.match(/^(\d{2})(\d{2})(\d{2})$/);
+  if (m) return iso(2000 + +m[1], +m[2], +m[3]) || s;
+  if (/^\d{5}$/.test(s)) return normalizeBirthday(+s);
+  return s;
+}
+
+// 오늘부터 limit일 안에 오는 학생 생일·달력 일정을 '다가오는 날' 항목으로 만듦 (저장하지 않고 열 때마다 계산)
+// 생일이 올해 이미 지났으면 내년 생일로, 2월 29일생은 평년엔 2월 28일로 봄
+function upcomingAutoDays(students, events, today, limit) {
+  const t0 = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const dayDiff = (d) => Math.round((d - t0) / 86400000);
+  const out = [];
+  for (const s of students || []) {
+    const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(normalizeBirthday(s.birthday));
+    if (!m) continue;
+    const mon = +m[1] - 1, day = +m[2];
+    const onYear = (y) => { const d = new Date(y, mon, day); return d.getMonth() === mon ? d : new Date(y, mon + 1, 0); };
+    let next = onYear(t0.getFullYear());
+    if (next < t0) next = onYear(t0.getFullYear() + 1);
+    if (dayDiff(next) <= limit) out.push({ id: "auto-bd-" + s.id, name: s.name + " 생일", date: toISODate(next), emoji: "🎂", auto: "생일" });
+  }
+  const seen = new Set();
+  for (const ev of events || []) {
+    const d = ev.allDay ? new Date(ev.start + "T00:00:00") : new Date(ev.start);
+    const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const n = dayDiff(day);
+    const key = ev.title + "|" + toISODate(day);
+    if (n < 0 || n > limit || seen.has(key)) continue;
+    seen.add(key);
+    out.push({ id: "auto-cal-" + ev.id + "-" + toISODate(day), name: ev.title, date: toISODate(day), emoji: "📅", auto: "달력" });
+  }
+  return out;
+}
+
 window.Helpers = {
   getDayName, formatDate, getDday, isTodayBirthday, getAvatarColor, getInitials,
-  getCurrentPeriod, shuffleArray, generateUUID, getWeekStart, toISODate,
+  getCurrentPeriod, shuffleArray, generateUUID, getWeekStart, toISODate, normalizeBirthday, upcomingAutoDays,
 };
 
 /* ===================== NEIS API (급식 / 학사일정) ===================== */
@@ -283,6 +336,71 @@ async function fetchSchoolHoliday(date = neisTodayString()) {
 }
 
 window.NeisApi = { fetchTodayLunch, fetchSchoolHoliday };
+
+/* ===================== 구글 캘린더 일정 읽기 (공개 달력 + Google API 키) ===================== */
+// 설정 칸에는 ID, 공유 주소, <iframe> 코드 무엇을 넣어도 달력 ID만 뽑아냄
+function extractCalendarId(input) {
+  const s = String(input || "").trim();
+  if (!s) return "";
+  const srcAttr = s.match(/src="([^"]+)"/);
+  const u = srcAttr ? srcAttr[1] : s;
+  if (u.includes("calendar.google.com") && u.includes("src=")) { const m = u.match(/src=([^&"]+)/); return m ? decodeURIComponent(m[1]) : ""; }
+  return u;
+}
+
+async function fetchCalendarEvents(calendarInputs, apiKey, timeMin, timeMax) {
+  const lists = await Promise.all(calendarInputs.map(async (raw) => {
+    const id = extractCalendarId(raw);
+    if (!id) return [];
+    const params = new URLSearchParams({ key: apiKey, timeMin: timeMin.toISOString(), timeMax: timeMax.toISOString(), singleEvents: "true", orderBy: "startTime", maxResults: "250" });
+    const res = await fetch("https://www.googleapis.com/calendar/v3/calendars/" + encodeURIComponent(id) + "/events?" + params);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error((body && body.error && body.error.message) || ("HTTP " + res.status));
+    }
+    const data = await res.json();
+    return (data.items || []).filter(e => e.status !== "cancelled" && e.start).map(e => ({
+      id: e.id, title: e.summary || "(제목 없음)", allDay: !!e.start.date,
+      start: e.start.dateTime || e.start.date, end: (e.end && (e.end.dateTime || e.end.date)) || e.start.dateTime || e.start.date,
+    }));
+  }));
+  return lists.flat();
+}
+
+// 일정을 주간 표 칸에 나눔: 수업 시간과 겹치면 그 교시 칸, 하루 종일·수업 밖 시간이면 요일 머리에
+// days: [{ day: "월", iso: "2026-11-09" }], slots: { 1: [540, 580], ... } (분 단위)
+function placeEventsInWeek(events, days, slots) {
+  const cells = {}, dayNotes = {};
+  const push = (obj, k, v) => { (obj[k] = obj[k] || []).push(v); };
+  const hhmm = (m) => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+  for (const ev of events) {
+    for (const d of days) {
+      if (ev.allDay) { if (ev.start <= d.iso && d.iso < ev.end) push(dayNotes, d.day, ev.title); continue; }
+      const s = new Date(ev.start), e = new Date(ev.end);
+      const dayStart = new Date(d.iso + "T00:00:00"), dayEnd = new Date(dayStart.getTime() + 86400000);
+      if (!(s < dayEnd && e > dayStart)) continue;
+      const from = s <= dayStart ? 0 : s.getHours() * 60 + s.getMinutes();
+      const to = e >= dayEnd ? 1440 : e.getHours() * 60 + e.getMinutes();
+      let inClass = false;
+      for (const p of Object.keys(slots)) { const [a, b] = slots[p]; if (from < b && to > a) { push(cells, d.day + "-" + p, ev.title); inClass = true; } }
+      if (!inClass) push(dayNotes, d.day, (from > 0 ? hhmm(from) + " " : "") + ev.title);
+    }
+  }
+  return { cells, dayNotes };
+}
+
+window.GoogleCalApi = { extractCalendarId, fetchCalendarEvents, placeEventsInWeek };
+// 둘러보기(?mock=1) 모드: 실제 구글 대신 예시 일정 3개
+if (location.search.includes("mock=1")) {
+  window.GoogleCalApi.fetchCalendarEvents = async (inputs, key, timeMin) => {
+    const day = (n) => { const x = new Date(timeMin); x.setDate(x.getDate() + n); return toISODate(x); };
+    return [
+      { id: "m1", title: "공개수업", allDay: false, start: day(0) + "T10:00:00", end: day(0) + "T11:20:00" },
+      { id: "m2", title: "현장체험학습", allDay: true, start: day(2), end: day(3) },
+      { id: "m3", title: "교직원 회의", allDay: false, start: day(3) + "T15:30:00", end: day(3) + "T16:30:00" },
+    ];
+  };
+}
 
 /* ===================== Gemini (브라우저에서 직접 호출) ===================== */
 async function generateBehaviorSummary(studentData, apiKey) {

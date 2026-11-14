@@ -665,6 +665,40 @@ button.att-note-btn:hover { color: var(--ink); background: #F1ECE6; }
   .stu-rank-actions { width: 100%; padding-left: 38px; }
 }
 
+/* ---------- 학급 도구: 전체화면 ---------- */
+.tool-card-header .tool-fs-btn { margin-left: auto; }
+.tool-fs-btn { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; min-height: 36px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); font-size: 13px; font-weight: 700; transition: background 0.15s, border-color 0.15s, color 0.15s; }
+.tool-fs-btn:hover { background: var(--carrot-wash); border-color: #F2C9A8; color: var(--carrot-ink); }
+.tool-card.is-full { position: fixed; inset: 0; z-index: 900; box-shadow: none; display: flex; flex-direction: column; width: 100vw; height: 100vh; margin: 0; padding: clamp(24px, 4vh, 48px) clamp(24px, 5vw, 72px); border: 0; border-radius: 0; background: var(--paper); overflow: auto; }
+body.has-full-tool { overflow: hidden; }
+.tool-card.is-full .tool-card-header { margin-bottom: clamp(16px, 3vh, 40px); }
+.tool-card.is-full .tool-title { font-size: clamp(24px, 3vw, 40px); }
+.tool-card.is-full .tool-desc { font-size: clamp(14px, 1.4vw, 20px); }
+.tool-card.is-full .tool-emoji { font-size: clamp(28px, 3vw, 44px); }
+.tool-card.is-full .tool-fs-btn { min-height: 48px; padding: 0 20px; font-size: 16px; }
+.tool-card.is-full > :not(.tool-card-header) { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+.tool-card.is-full .btn { min-height: 56px; padding: 0 28px; font-size: 20px; }
+/* 뽑기 */
+.tool-card.is-full .roulette-wheel { width: min(56vh, 60vw); height: min(56vh, 60vw); margin-bottom: 4vh; }
+.tool-card.is-full .roulette-result { font-size: clamp(32px, 7vh, 96px); }
+.tool-card.is-full .picked-badge { font-size: 20px; padding: 6px 16px; }
+.tool-card.is-full .picker-count { font-size: 20px; margin-bottom: 2vh; }
+/* 타이머 */
+.tool-card.is-full .timer-container, .tool-card.is-full .picker-container { align-items: center; }
+.tool-card.is-full .timer-display { font-size: min(28vh, 18vw); line-height: 1; margin: 2vh 0 5vh; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+.tool-card.is-full .timer-mode-btn, .tool-card.is-full .timer-preset { font-size: 18px; padding: 10px 20px; }
+.tool-card.is-full .timer-presets, .tool-card.is-full .timer-mode-toggle { margin-bottom: 3vh; }
+/* 팀 편성 */
+.tool-card.is-full .groups-result { grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 20px; }
+.tool-card.is-full .group-card-title { font-size: 26px; }
+.tool-card.is-full .group-member { font-size: 20px; padding: 8px 12px; }
+.tool-card.is-full .group-settings { font-size: 18px; }
+/* 투표 */
+.tool-card.is-full .poll-container { justify-content: flex-start; max-width: 1100px; width: 100%; margin: 0 auto; }
+.tool-card.is-full .poll-question { font-size: clamp(22px, 2.6vw, 36px); }
+.tool-card.is-full .poll-result-item { font-size: 20px; }
+.tool-card.is-full .poll-total { font-size: 18px; }
+
 /* ---------- 바로가기 ---------- */
 .emoji-picker { display: flex; flex-wrap: wrap; gap: 6px; }
 .emoji-opt { width: 44px; height: 44px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); font-size: 22px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; transition: background 0.15s, border-color 0.15s; }
@@ -785,14 +819,25 @@ button.att-note-btn:hover { color: var(--ink); background: #F1ECE6; }
 .lrn-student.is-done .att-box { background: var(--tone); border-color: var(--tone); }
 .lrn-student.is-done .att-no { color: var(--tone-ink); }
 
-/* 학생 관리: 팀 색 */
+/* 학생 관리: 남녀 색 (남 귤빛 노랑, 여 코랄) */
 .stu-card[data-tone] { border-top: 4px solid var(--tone); }
 .stu-card[data-tone] .att-no { color: var(--tone-ink); }
-.stu-team[data-tone] { background: var(--tone-wash); color: var(--tone-ink); }
-.stu-team-card[data-tone], .stu-team-card.is-first[data-tone] { background: var(--tone-wash); }
-.stu-team-card[data-tone] .rank-no, .stu-team-card[data-tone] .stu-rank-score strong, .stu-team-card[data-tone] .stu-team-name { color: var(--tone-ink); }
-.stu-team-card[data-tone] .stu-pill { border-color: var(--tone-soft); }
-.stu-summary { background: var(--tone-wash); }
+/* 자리 배치도: 흰 책상 + 남녀 색 점·밑줄, 두 자리씩 짝 */
+.seating-container { padding: 28px 24px 32px !important; background-color: #FCFAF7; background-image: radial-gradient(var(--line) 1px, transparent 1px); background-size: 20px 20px; }
+.teacher-desk { width: 200px; max-width: none; margin: 0 auto 36px; padding: 9px 0; border: 1px solid var(--line) !important; border-radius: 12px; background: var(--surface) !important; color: var(--ink-2) !important; font-size: 14px; font-weight: 700; letter-spacing: 0.3em; text-indent: 0.3em; box-shadow: var(--shadow-sm); position: relative; }
+.teacher-desk::before { content: ""; position: absolute; left: 50%; top: -14px; width: 440px; height: 4px; margin-left: -220px; border-radius: 4px; background: var(--line); }
+.seating-grid-dynamic { width: 944px; }
+.seat, .seat.occupied { width: 140px; height: 78px; margin: 0 8px 14px 0; padding: 10px 12px 12px; align-items: flex-start; justify-content: space-between; gap: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-sm); overflow: hidden; transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s; }
+.seat:nth-child(6n+2), .seat:nth-child(6n+4) { margin-right: 40px; }
+.seat:nth-child(6n) { margin-right: 0; }
+.seat[data-tone]::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: 0; height: 3px; border-radius: 3px 3px 0 0; background: var(--tone); }
+.seat:hover, .seat[data-tone]:hover { transform: translateY(-2px); background: var(--surface); border-color: var(--tone-soft); box-shadow: var(--shadow-md); }
+.seat .seat-number, .seat[data-tone] .seat-number { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--ink-3); opacity: 1; }
+.seat[data-tone] .seat-number::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--tone); }
+.seat .seat-name, .seat[data-tone] .seat-name { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink); }
+.seat-legend { display: flex; align-items: center; gap: 14px; }
+.seat-legend > [data-tone] { display: inline-flex; align-items: center; gap: 6px; padding: 0; background: none; color: var(--ink-3); font-size: 13px; font-weight: 600; }
+.seat-legend > [data-tone]::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--tone); }
 
 /* 바로가기: 아이콘 바탕을 다섯 색으로 돌아가며 */
 .link-card-wrapper:nth-child(5n+1) .link-icon { background: var(--carrot-wash); }
@@ -800,6 +845,103 @@ button.att-note-btn:hover { color: var(--ink); background: #F1ECE6; }
 .link-card-wrapper:nth-child(5n+3) .link-icon { background: var(--tangerine-wash); }
 .link-card-wrapper:nth-child(5n+4) .link-icon { background: var(--cocoa-wash); }
 .link-card-wrapper:nth-child(5n+5) .link-icon { background: var(--coral-wash); }
+
+/* 주간 일정: 표 가운데 정렬 */
+.wk-table th, .wk-table td, .wk-table thead th { text-align: center; }
+.wk-plan { align-items: center; text-align: center; }
+.wk-plan[data-tone] .wk-subject { align-self: center; }
+.wk-add { justify-content: center; }
+.wk-form-actions { justify-content: center; }
+
+/* 일정 & 공지: 달력을 머리말 아래 남은 화면 높이에 딱 맞춤 */
+.calendar-page .google-calendar-embed, .calendar-page .google-calendar-embed iframe { height: calc(100dvh - var(--cal-offset, 160px)) !important; min-height: 420px !important; }
+@media (max-width: 768px) { .calendar-page { --cal-offset: 250px; } }
+
+/* 대시보드 배치 편집: 끄는 위젯은 마우스를 그대로 따라가고, 놓일 자리는 점선 칸으로 */
+.dgrid-ghost { position: absolute; z-index: 1; border: 2px dashed var(--carrot); border-radius: var(--radius-xl); background: rgba(238, 90, 12, 0.06); pointer-events: none; transition: left 0.18s var(--ease-out), top 0.18s var(--ease-out), width 0.18s var(--ease-out), height 0.18s var(--ease-out); }
+.dgrid > .wcard.is-active { box-shadow: 0 18px 40px rgba(143, 53, 7, 0.18); opacity: 0.96; will-change: left, top, width, height; }
+.dgrid > .wcard.is-active .grid-handle--move { cursor: grabbing; }
+
+/* 사이드바 메뉴 순서 바꾸기 */
+.sidebar-nav .nav-item[draggable="true"] { cursor: grab; }
+.sidebar-nav.is-sorting .nav-item { transition: background 0.15s, transform 0.15s; }
+.nav-item.is-dragging { background: var(--carrot-wash); outline: 2px dashed #F2C9A8; outline-offset: -2px; }
+.nav-order-hint { margin-top: auto; padding: 12px 20px 20px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; font-size: 12px; color: var(--ink-4); }
+.nav-order-hint button { font-size: 12px; font-weight: 700; color: var(--carrot-ink); padding: 2px 0; }
+.nav-order-hint button:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+/* 주간 일정: 구글 달력 일정 */
+.wk-cal { display: block; max-width: 100%; margin-top: 4px; padding: 2px 8px; border-radius: 6px; background: var(--coral-wash); color: var(--coral-ink); font-size: 12px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.wk-cal::before { content: "📅 "; }
+.wk-table thead th .wk-cal-day { display: block; margin: 6px auto 0; max-width: 100%; padding: 2px 8px; border-radius: 6px; background: var(--surface); color: var(--coral-ink); font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.wk-table thead th.is-today .wk-cal-day { background: rgba(255, 255, 255, 0.92); }
+.wk-cal-status { display: flex; align-items: center; gap: 6px; margin: -8px 0 0; font-size: 13px; color: var(--ink-3); }
+.wk-cal-status svg { color: var(--coral-ink); flex-shrink: 0; }
+.wk-cal-status.is-error { color: var(--danger-ink); }
+
+/* 출석: NEIS 구분 */
+.att-reason { flex-shrink: 0; padding: 1px 7px; border-radius: 5px; background: var(--muted-fill); color: var(--ink-2); font-size: 11px; font-weight: 700; }
+.att-reason.is-missing { background: var(--carrot-wash); color: var(--carrot-ink); }
+.att-reason-label { margin-top: 4px; font-size: 13px; font-weight: 700; color: var(--ink-2); }
+.att-reason-pick { align-self: flex-start; }
+.att-reason-pick button { min-height: 38px; padding: 6px 14px; }
+.neis-sum { margin-top: 8px; padding-top: 16px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 12px; }
+.neis-sum-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.neis-sum-sub { margin: 6px 0 0; font-size: 13px; color: var(--ink-3); }
+.neis-sum-actions { display: flex; gap: 6px; }
+.neis-sum-actions .btn:disabled { opacity: 0.45; cursor: default; }
+.neis-sum-warn { margin: 0; padding: 10px 14px; border-radius: 12px; background: var(--carrot-wash); color: var(--carrot-ink); font-size: 14px; font-weight: 600; }
+.neis-sum-empty { margin: 0; padding: 16px; border-radius: 12px; border: 1px dashed var(--line); font-size: 14px; color: var(--ink-3); text-align: center; }
+.neis-sum-scroll { overflow-x: auto; border: 1px solid var(--line-soft); border-radius: 12px; }
+.neis-sum-table { width: 100%; min-width: 860px; border-collapse: collapse; font-size: 13px; }
+.neis-sum-table th, .neis-sum-table td { padding: 8px 6px; border-bottom: 1px solid var(--line-soft); border-right: 1px solid var(--line-soft); text-align: center; }
+.neis-sum-table th { background: var(--tone-wash); color: var(--tone-ink); font-weight: 700; }
+.neis-sum-table th.neis-sum-sub-h { font-size: 12px; font-weight: 600; }
+.neis-sum-table th.is-absent { color: var(--st-absent-ink); }
+.neis-sum-table th.is-late { color: var(--st-late-ink); }
+.neis-sum-table th.is-early-leave { color: var(--st-early-ink); }
+.neis-sum-table td.has-n { font-weight: 800; color: var(--ink); background: #FFFBF7; }
+.neis-sum-table .neis-sum-name { font-weight: 700; white-space: nowrap; }
+.neis-sum-table .neis-sum-note { text-align: left; min-width: 240px; color: var(--ink-2); }
+.neis-sum-table tr > :last-child { border-right: 0; }
+.neis-sum-table tbody tr:last-child td { border-bottom: 0; }
+@media print {
+  body * { visibility: hidden; }
+  .neis-sum, .neis-sum * { visibility: visible; }
+  .neis-sum { position: absolute; inset: 0; border: 0; }
+  .neis-sum-actions, .neis-sum-warn { display: none; }
+  .neis-sum-scroll { overflow: visible; border: 0; }
+  .neis-sum-table { min-width: 0; font-size: 11px; }
+}
+
+/* 월별 현황: 저장 전 바뀐 칸 */
+.monthly-cell.is-changed { background: var(--carrot-wash); box-shadow: inset 0 0 0 2px var(--carrot); }
+.monthly-attendance .att-submit { position: sticky; bottom: 16px; }
+.monthly-attendance .att-submit:not(.is-dirty) { position: static; }
+
+/* 출석 저장 바: 연한 복숭아색 + 얇게 (진한 면은 부담스러움) */
+.att-submit { padding: 6px 6px 6px 18px; gap: 8px 12px; }
+.att-submit .btn { min-height: 36px; padding: 0 16px; font-size: 14px; }
+.att-submit.is-dirty { background: var(--carrot-wash); border-color: #F2C9A8; color: var(--carrot-ink); box-shadow: 0 6px 18px rgba(143, 53, 7, 0.10); }
+.att-submit.is-dirty .att-submit-text { color: var(--carrot-ink); }
+.att-submit.is-dirty .att-submit-text strong { color: var(--carrot-deep); font-size: 15px; }
+.att-submit.is-dirty .btn-secondary { background: var(--surface); color: var(--ink-2); }
+.att-submit.is-dirty .btn-secondary:hover { background: #FFF8F2; }
+.att-submit.is-dirty .btn-primary { background: var(--carrot-btn); color: #FFFFFF; box-shadow: var(--shadow-primary); }
+.att-submit.is-dirty .btn-primary:hover { background: var(--carrot-deep); }
+
+/* 타이머: 활동 이름 */
+.timer-activity { display: block; width: 100%; max-width: 420px; margin: 0 auto 14px; padding: 8px 12px; border: 0 !important; border-bottom: 2px solid var(--line) !important; border-radius: 0 !important; background: transparent !important; box-shadow: none !important; text-align: center; font-size: 18px; font-weight: 700; color: var(--ink); }
+.timer-activity::placeholder { color: var(--ink-4); font-weight: 500; }
+.timer-activity:focus { border-bottom-color: var(--carrot-btn) !important; }
+.tool-card.is-full .timer-activity { max-width: min(1100px, 90vw); font-size: clamp(28px, 6vh, 64px); margin-bottom: 2vh; padding: 12px 16px; }
+
+/* 다가오는 날: 자동으로 들어온 항목 표시 */
+.dday-when { display: flex; align-items: center; gap: 6px; }
+.dday-auto { padding: 0 6px; border-radius: 5px; background: var(--surface); color: var(--tone-ink); font-size: 11px; font-weight: 700; }
+.dday-row.is-next .dday-auto { background: rgba(255, 255, 255, 0.22); color: #FFFFFF; }
+
+.dday-cal-problem { margin: 0 0 10px; padding: 8px 12px; border-radius: 10px; background: var(--carrot-wash); color: var(--carrot-ink); font-size: 13px; font-weight: 600; line-height: 1.5; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
