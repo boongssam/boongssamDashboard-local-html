@@ -1669,7 +1669,8 @@ function LearningPage() {
   const [isEditingActivity, setIsEditingActivity] = useState(false);
   const [tempActivityContent, setTempActivityContent] = useState('');
   const [tempActivityType, setTempActivityType] = useState('과제');
-  const [selectedAssignment, setSelectedAssignment] = useState(null);
+  const [selectedId, setSelectedAssignment] = useState(null);
+  const selectedAssignment = assignments.find(a => a.id === selectedId) || null; // id로 찾아야 체크 후에도 최신 상태가 보임
   // 아래 목록에서 과제를 선택하면 체크 그리드도 그 과제 기준으로 바뀌고, 선택을 풀면 최신 활동으로 돌아감
   const activeActivity = selectedAssignment || currentActivity;
   const [currentPage, setCurrentPage] = useState(1);
@@ -1689,82 +1690,135 @@ function LearningPage() {
   };
   const handlePointerLeave = () => { if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; } };
 
+  // 키보드(Enter/Space)로도 체크·해제할 수 있게
+  const toggleByKey = (studentId) => {
+    if (!activeActivity) return;
+    updateAssignmentSubmissions(activeActivity.id, { [studentId]: activeActivity.submissions?.[studentId] ? null : { timestamp: new Date().toISOString() } });
+  };
+  const closeForm = () => { setTempActivityContent(''); setTempActivityType('과제'); setIsEditingActivity(false); };
+  const saveActivity = () => {
+    if (tempActivityContent.trim() !== '') { addAssignment({ id: generateUUID(), title: tempActivityContent, subject: '활동', type: tempActivityType, dueDate: toISODate(new Date()), createdAt: new Date().toISOString(), submissions: {}, total: students.length }); showToast('새로운 활동이 추가되었습니다.', 'success'); setSelectedAssignment(null); setCurrentPage(1); }
+    closeForm();
+  };
+
   const sortedAssignments = [...assignments].reverse();
   const totalPages = Math.ceil(sortedAssignments.length / itemsPerPage) || 1;
   const startIndex = (currentPage - 1) * itemsPerPage;
   const displayAssignments = sortedAssignments.slice(startIndex, startIndex + itemsPerPage);
+  const doneCount = activeActivity ? students.filter(s => activeActivity.submissions?.[s.id]).length : 0;
+  const donePct = students.length ? Math.round((doneCount / students.length) * 100) : 0;
 
   return (
-    <div className="learning-page">
-      <div className="activity-check-section">
-        <h3 className="section-title" style={{ marginBottom: '1rem' }}><span>✅</span> 활동 완료 체크</h3>
-        <div className="activity-content-box">
-          {isAdmin && isEditingActivity ? (
-            <div className="activity-edit-mode">
-              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                <select className="form-input" value={tempActivityType} onChange={e => setTempActivityType(e.target.value)} style={{ width: '120px' }}><option value="과제">과제</option><option value="수행평가">수행평가</option></select>
-                <input type="text" className="activity-input form-input" value={tempActivityContent} onChange={(e) => setTempActivityContent(e.target.value)} placeholder="활동 내용을 입력하세요" autoFocus style={{ flex: 1 }} />
-              </div>
-              <div className="activity-edit-actions">
-                <button className="activity-btn primary" onClick={() => {
-                  if (tempActivityContent.trim() !== '') { addAssignment({ id: generateUUID(), title: tempActivityContent, subject: '활동', type: tempActivityType, dueDate: toISODate(new Date()), createdAt: new Date().toISOString(), submissions: {}, total: students.length }); showToast('새로운 활동이 추가되었습니다.', 'success'); setSelectedAssignment(null); }
-                  setIsEditingActivity(false);
-                }}>저장</button>
-                <button className="activity-btn secondary" onClick={() => { setTempActivityContent(''); setTempActivityType('과제'); setIsEditingActivity(false); }}>취소</button>
-              </div>
-            </div>
+    <div className="lrn">
+      <div className="wk-top">
+        <div className="wk-title">
+          <h1 className="dash-headline">{activeActivity ? <>{activeActivity.title}</> : '오늘 할 활동을 정해요'}</h1>
+          {activeActivity && <span className={`lrn-type ${activeActivity.type === '수행평가' ? 'is-eval' : ''}`}>{activeActivity.type || '수행평가'}</span>}
+          {selectedAssignment && <button type="button" className="chip-btn" onClick={() => setSelectedAssignment(null)}>최신 활동으로</button>}
+        </div>
+        {isAdmin && !isEditingActivity && <button type="button" className="btn btn-primary" onClick={() => { closeForm(); setIsEditingActivity(true); }}><Icon name="plus" size={18} /> 활동 추가</button>}
+      </div>
+
+      {isAdmin && isEditingActivity && (
+        <form className="lrn-form" onSubmit={e => { e.preventDefault(); saveActivity(); }}>
+          <div className="mode-switch" role="group" aria-label="종류">
+            {['과제', '수행평가'].map(t => <button key={t} type="button" aria-pressed={tempActivityType === t} onClick={() => setTempActivityType(t)}>{t}</button>)}
+          </div>
+          <input type="text" className="form-input" aria-label="활동 내용" value={tempActivityContent} onChange={e => setTempActivityContent(e.target.value)} placeholder="예: 수학 익힘책 34쪽" autoFocus />
+          <div className="lrn-form-actions">
+            <button type="button" className="btn btn-secondary btn-sm" onClick={closeForm}>취소</button>
+            <button type="submit" className="btn btn-primary btn-sm">저장</button>
+          </div>
+        </form>
+      )}
+
+      <section className="wcard lrn-check">
+        <div className="wcard-head">
+          <h2 className="wcard-title">활동 완료 체크</h2>
+          {activeActivity && <span className="wcard-meta"><strong className="num lrn-done">{doneCount}</strong> / <span className="num">{students.length}</span>명 완료</span>}
+        </div>
+        <div className="wcard-body">
+          {activeActivity ? (
+            <>
+              <div className="lrn-track" role="progressbar" aria-label="완료율" aria-valuenow={donePct} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${donePct}%` }} className={donePct === 100 ? 'is-done' : ''} /></div>
+              <p className="lrn-hint">이름을 누르면 완료, 길게 누르면 취소돼요.</p>
+              <ul className="lrn-grid">
+                {students.map(student => {
+                  const isCompleted = !!activeActivity.submissions?.[student.id];
+                  return (
+                    <li key={student.id}>
+                      <button type="button" aria-pressed={isCompleted} className={`lrn-student ${isCompleted ? 'is-done' : ''}`} onPointerDown={() => handlePointerDown(student.id)} onPointerUp={() => handlePointerUp(student.id)} onPointerLeave={handlePointerLeave} onContextMenu={e => e.preventDefault()} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleByKey(student.id); } }}>
+                        <span className="att-box" />
+                        <span className="att-no num">{student.number}</span>
+                        <span className="lrn-name">{student.name}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
           ) : (
-            <div className="activity-view-mode">
-              <div className="activity-text">
-                {activeActivity ? (<><span className={`badge ${activeActivity.type === '과제' ? 'badge-success' : 'badge-primary'}`}>{activeActivity.type || '수행평가'}</span><span className="activity-label" style={{ marginLeft: '0.5rem' }}>{selectedAssignment ? '선택한 과제:' : '활동 내용:'}</span><span className="activity-value">{activeActivity.title}</span></>) : (<span className="activity-value">현재 등록된 활동이 없습니다. 새로 추가해 주세요.</span>)}
-              </div>
-              {isAdmin && <button className="activity-btn edit" onClick={() => { setTempActivityContent(''); setTempActivityType('과제'); setIsEditingActivity(true); }}>추가</button>}
+            <div className="wcard-empty">{isAdmin ? '오른쪽 위 “활동 추가”로 새 활동을 만들어 주세요.' : '아직 등록된 활동이 없어요.'}</div>
+          )}
+        </div>
+      </section>
+
+      <section className="wcard">
+        <div className="wcard-head">
+          <h2 className="wcard-title">과제·수행평가 현황</h2>
+          <span className="wcard-meta">눌러서 제출 명단 보기</span>
+        </div>
+        <div className="wcard-body">
+          {displayAssignments.length > 0 ? (
+            <ul className="lrn-list">
+              {displayAssignments.map(a => {
+                const total = a.total || students.length;
+                const submittedCount = typeof a.submitted === 'number' ? a.submitted : Object.keys(a.submissions || {}).length;
+                const pct = total ? Math.round((submittedCount / total) * 100) : 0;
+                const remaining = total - submittedCount;
+                const isOpen = selectedAssignment?.id === a.id;
+                const done = students.filter(s => a.submissions?.[s.id]);
+                const notDone = students.filter(s => !a.submissions?.[s.id]);
+                return (
+                  <li key={a.id} className={`lrn-item ${isOpen ? 'is-open' : ''}`}>
+                    <div className="lrn-row">
+                      <button type="button" className="lrn-row-main" aria-expanded={isOpen} onClick={() => setSelectedAssignment(isOpen ? null : a.id)}>
+                        <span className={`lrn-type ${a.type === '수행평가' ? 'is-eval' : ''}`}>{a.type}</span>
+                        <span className="lrn-row-text">
+                          <span className="lrn-row-title">{a.title}</span>
+                          <span className="lrn-row-meta"><span className="num">{a.dueDate}</span>{remaining > 0 ? <span className="lrn-left">미제출 {remaining}명</span> : <span className="lrn-all">모두 제출</span>}</span>
+                        </span>
+                        <span className="lrn-row-bar"><span style={{ width: `${pct}%` }} className={pct === 100 ? 'is-done' : ''} /></span>
+                        <span className="lrn-pct num">{pct}<small>%</small></span>
+                      </button>
+                      {isAdmin && <button type="button" className="icon-ghost" aria-label={`${a.title} 삭제`} onClick={() => { if (confirm('이 항목을 정말 삭제하시겠습니까?')) { deleteAssignment(a.id); if (isOpen) setSelectedAssignment(null); showToast('삭제되었습니다.', 'success'); } }}><Icon name="trash" size={18} /></button>}
+                    </div>
+                    {isOpen && (
+                      <div className="lrn-who">
+                        <div className="lrn-who-group">
+                          <span className="lrn-who-label is-done">제출 <span className="num">{done.length}</span></span>
+                          <div className="lrn-chips">{done.length ? done.map(s => <span key={s.id} className="lrn-chip is-done"><span className="num">{s.number}</span>{s.name}</span>) : <span className="lrn-none">아직 없어요</span>}</div>
+                        </div>
+                        <div className="lrn-who-group">
+                          <span className="lrn-who-label is-left">미제출 <span className="num">{notDone.length}</span></span>
+                          <div className="lrn-chips">{notDone.length ? notDone.map(s => <span key={s.id} className="lrn-chip is-left"><span className="num">{s.number}</span>{s.name}</span>) : <span className="lrn-none">모두 냈어요</span>}</div>
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (<div className="wcard-empty">등록된 과제가 없어요. 활동을 추가하면 여기에 쌓여요.</div>)}
+          {totalPages > 1 && (
+            <div className="lrn-pager">
+              <button type="button" className="round-btn round-btn--sm" aria-label="이전 쪽" disabled={currentPage === 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))}><Icon name="chevron" size={18} /></button>
+              <span className="num">{currentPage} / {totalPages}</span>
+              <button type="button" className="round-btn round-btn--sm wk-next" aria-label="다음 쪽" disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}><Icon name="chevron" size={18} /></button>
             </div>
           )}
         </div>
-        <div className="activity-students-grid">
-          {students.map(student => {
-            const isCompleted = !!activeActivity?.submissions?.[student.id];
-            return (<div key={student.id} className={`activity-student-card ${isCompleted ? 'completed' : ''}`} onPointerDown={() => handlePointerDown(student.id)} onPointerUp={() => handlePointerUp(student.id)} onPointerLeave={handlePointerLeave} onContextMenu={(e) => e.preventDefault()}><div className="student-number">{student.number}</div><div className="student-name">{student.name}</div>{isCompleted && <div className="completed-check">✓</div>}</div>);
-          })}
-        </div>
-      </div>
-
-      <h3 className="section-title"><span>📝</span> 과제/수행평가 현황</h3>
-      <div className="assignment-list">
-        {displayAssignments.length > 0 ? displayAssignments.map(a => {
-          const total = a.total || students.length;
-          const submittedCount = typeof a.submitted === 'number' ? a.submitted : Object.keys(a.submissions || {}).length;
-          const pct = Math.round((submittedCount / total) * 100);
-          const remaining = total - submittedCount;
-          return (
-            <div key={a.id} className="assignment-card clickable" onClick={() => setSelectedAssignment(selectedAssignment?.id === a.id ? null : a)} style={{ flexDirection: 'column', alignItems: 'flex-start', outline: selectedAssignment?.id === a.id ? '2px solid var(--primary)' : 'none' }}>
-              <div style={{ display: 'flex', width: '100%', alignItems: 'center', gap: '1rem' }}>
-                <div className="assignment-icon" style={{ background: a.type === '수행평가' ? '#FFF4ED' : '#ECFDF5' }}>{a.type === '수행평가' ? '📋' : '📝'}</div>
-                <div className="assignment-details">
-                  <div className="assignment-title">{a.title}</div>
-                  <div className="assignment-info" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', width: '100%' }}>
-                    <span className={`badge ${a.type === '수행평가' ? 'badge-primary' : 'badge-success'}`}>{a.type}</span><span>{a.subject}</span><span>마감: {a.dueDate}</span>
-                    {remaining > 0 && <span style={{ color: 'var(--danger)' }}>미제출 {remaining}명</span>}
-                  </div>
-                </div>
-                <div className="assignment-progress-bar"><div className="progress-bar"><div className={`progress-fill ${pct >= 80 ? 'green' : pct >= 50 ? '' : 'red'}`} style={{ width: `${pct}%` }} /></div></div>
-                <div className="assignment-percentage">{pct}%</div>
-                {isAdmin && <button className="assignment-delete-btn" onClick={(e) => { e.stopPropagation(); if (confirm('이 항목을 정말 삭제하시겠습니까?')) { deleteAssignment(a.id); showToast('삭제되었습니다.', 'success'); } }}>🗑️</button>}
-              </div>
-              {selectedAssignment?.id === a.id && (
-                <div className="assignment-students-inline" style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-light)', width: '100%' }}>
-                  <div style={{ marginBottom: '0.5rem', fontWeight: 600, fontSize: '0.875rem', color: '#059669' }}>✅ 제출자</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>{students.filter(s => a.submissions?.[s.id]).map(s => (<button key={s.id} className="badge" style={{ border: 'none', background: '#D1FAE5', color: '#065F46', padding: '0.4rem 0.75rem', fontSize: '0.875rem', cursor: 'default' }}>{s.number}. {s.name}</button>))}{students.filter(s => a.submissions?.[s.id]).length === 0 && <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>제출자가 없습니다.</span>}</div>
-                  <div style={{ marginBottom: '0.5rem', fontWeight: 600, fontSize: '0.875rem', color: '#DC2626' }}>❌ 미제출자</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>{students.filter(s => !a.submissions?.[s.id]).map(s => (<button key={s.id} className="badge" style={{ border: 'none', background: '#FEE2E2', color: '#991B1B', padding: '0.4rem 0.75rem', fontSize: '0.875rem', cursor: 'default' }}>{s.number}. {s.name}</button>))}{students.filter(s => !a.submissions?.[s.id]).length === 0 && <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>미제출자가 없습니다.</span>}</div>
-                </div>
-              )}
-            </div>
-          );
-        }) : (<div className="empty-state" style={{ padding: '2rem', textAlign: 'center' }}><p style={{ color: 'var(--text-secondary)' }}>등록된 과제가 없습니다. 활동 완료 체크를 하면 자동으로 추가됩니다.</p></div>)}
-      </div>
-      {totalPages > 1 && (<div className="pagination" style={{ display: 'flex', justifyContent: 'center', gap: '0.5rem', marginTop: '1rem' }}><button className="btn btn-sm" disabled={currentPage === 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))}>이전</button><span style={{ fontSize: '0.875rem', fontWeight: 600, display: 'flex', alignItems: 'center' }}>{currentPage} / {totalPages}</span><button className="btn btn-sm" disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>다음</button></div>)}
+      </section>
     </div>
   );
 }

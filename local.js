@@ -123,6 +123,12 @@ if (location.search.includes('mock=1')) {
   MOCK_DATA.students = [
     { id: 1, number: 1, name: '강민준', gender: 'M', birthday: '2014-03-15', allergies: '', healthNotes: '', parentPhone: '010-1234-5678', points: 45, group: 1 },
     { id: 2, number: 2, name: '고서연', gender: 'F', birthday: '2014-07-22', allergies: '땅콩', healthNotes: '', parentPhone: '010-2345-6789', points: 52, group: 1 },
+    ...['김도윤', '김하은', '박지호', '배수아', '서준우', '윤채원', '이시우', '임나은', '정우진', '최유나'].map((name, i) => ({ id: i + 3, number: i + 3, name, gender: i % 2 ? 'F' : 'M', birthday: '', allergies: '', healthNotes: '', parentPhone: '', points: 30 + i, group: 2 })),
+  ];
+  MOCK_DATA.assignments = [
+    { id: 'as1', title: '독서록 2편 쓰기', subject: '활동', type: '과제', dueDate: '2026-11-12', createdAt: '2026-11-12T09:00:00Z', submissions: { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {}, 7: {}, 8: {}, 9: {}, 10: {}, 11: {}, 12: {} }, total: 12 },
+    { id: 'as2', title: '과학 실험 보고서', subject: '활동', type: '수행평가', dueDate: '2026-11-13', createdAt: '2026-11-13T09:00:00Z', submissions: { 1: {}, 3: {}, 4: {}, 7: {} }, total: 12 },
+    { id: 'as3', title: '수학 익힘책 34~35쪽', subject: '활동', type: '과제', dueDate: '2026-11-14', createdAt: '2026-11-14T09:00:00Z', submissions: { 2: {}, 5: {}, 6: {}, 8: {}, 9: {} }, total: 12 },
   ];
   MOCK_DATA.ddays = [{ id: 'd1', name: '현장체험학습', date: '2026-12-20', emoji: '🚌' }];
   MOCK_DATA.announcements = [{ id: 'a1', title: '테스트 공지', content: '목(mock) 모드 테스트용 공지입니다.', type: 'general', date: '2026-11-13' }];

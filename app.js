@@ -3900,7 +3900,8 @@ function LearningPage() {
   const [isEditingActivity, setIsEditingActivity] = useState(false);
   const [tempActivityContent, setTempActivityContent] = useState('');
   const [tempActivityType, setTempActivityType] = useState('과제');
-  const [selectedAssignment, setSelectedAssignment] = useState(null);
+  const [selectedId, setSelectedAssignment] = useState(null);
+  const selectedAssignment = assignments.find(a => a.id === selectedId) || null; // id로 찾아야 체크 후에도 최신 상태가 보임
   // 아래 목록에서 과제를 선택하면 체크 그리드도 그 과제 기준으로 바뀌고, 선택을 풀면 최신 활동으로 돌아감
   const activeActivity = selectedAssignment || currentActivity;
   const [currentPage, setCurrentPage] = useState(1);
@@ -3933,289 +3934,283 @@ function LearningPage() {
       timerRef.current = null;
     }
   };
+
+  // 키보드(Enter/Space)로도 체크·해제할 수 있게
+  const toggleByKey = studentId => {
+    if (!activeActivity) return;
+    updateAssignmentSubmissions(activeActivity.id, {
+      [studentId]: activeActivity.submissions?.[studentId] ? null : {
+        timestamp: new Date().toISOString()
+      }
+    });
+  };
+  const closeForm = () => {
+    setTempActivityContent('');
+    setTempActivityType('과제');
+    setIsEditingActivity(false);
+  };
+  const saveActivity = () => {
+    if (tempActivityContent.trim() !== '') {
+      addAssignment({
+        id: generateUUID(),
+        title: tempActivityContent,
+        subject: '활동',
+        type: tempActivityType,
+        dueDate: toISODate(new Date()),
+        createdAt: new Date().toISOString(),
+        submissions: {},
+        total: students.length
+      });
+      showToast('새로운 활동이 추가되었습니다.', 'success');
+      setSelectedAssignment(null);
+      setCurrentPage(1);
+    }
+    closeForm();
+  };
   const sortedAssignments = [...assignments].reverse();
   const totalPages = Math.ceil(sortedAssignments.length / itemsPerPage) || 1;
   const startIndex = (currentPage - 1) * itemsPerPage;
   const displayAssignments = sortedAssignments.slice(startIndex, startIndex + itemsPerPage);
+  const doneCount = activeActivity ? students.filter(s => activeActivity.submissions?.[s.id]).length : 0;
+  const donePct = students.length ? Math.round(doneCount / students.length * 100) : 0;
   return /*#__PURE__*/React.createElement("div", {
-    className: "learning-page"
+    className: "lrn"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "activity-check-section"
-  }, /*#__PURE__*/React.createElement("h3", {
-    className: "section-title",
-    style: {
-      marginBottom: '1rem'
-    }
-  }, /*#__PURE__*/React.createElement("span", null, "\u2705"), " \uD65C\uB3D9 \uC644\uB8CC \uCCB4\uD06C"), /*#__PURE__*/React.createElement("div", {
-    className: "activity-content-box"
-  }, isAdmin && isEditingActivity ? /*#__PURE__*/React.createElement("div", {
-    className: "activity-edit-mode"
+    className: "wk-top"
   }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: '0.5rem',
-      marginBottom: '0.5rem'
-    }
-  }, /*#__PURE__*/React.createElement("select", {
-    className: "form-input",
-    value: tempActivityType,
-    onChange: e => setTempActivityType(e.target.value),
-    style: {
-      width: '120px'
-    }
-  }, /*#__PURE__*/React.createElement("option", {
-    value: "\uACFC\uC81C"
-  }, "\uACFC\uC81C"), /*#__PURE__*/React.createElement("option", {
-    value: "\uC218\uD589\uD3C9\uAC00"
-  }, "\uC218\uD589\uD3C9\uAC00")), /*#__PURE__*/React.createElement("input", {
-    type: "text",
-    className: "activity-input form-input",
-    value: tempActivityContent,
-    onChange: e => setTempActivityContent(e.target.value),
-    placeholder: "\uD65C\uB3D9 \uB0B4\uC6A9\uC744 \uC785\uB825\uD558\uC138\uC694",
-    autoFocus: true,
-    style: {
-      flex: 1
-    }
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "activity-edit-actions"
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "activity-btn primary",
+    className: "wk-title"
+  }, /*#__PURE__*/React.createElement("h1", {
+    className: "dash-headline"
+  }, activeActivity ? /*#__PURE__*/React.createElement(React.Fragment, null, activeActivity.title) : '오늘 할 활동을 정해요'), activeActivity && /*#__PURE__*/React.createElement("span", {
+    className: `lrn-type ${activeActivity.type === '수행평가' ? 'is-eval' : ''}`
+  }, activeActivity.type || '수행평가'), selectedAssignment && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "chip-btn",
+    onClick: () => setSelectedAssignment(null)
+  }, "\uCD5C\uC2E0 \uD65C\uB3D9\uC73C\uB85C")), isAdmin && !isEditingActivity && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-primary",
     onClick: () => {
-      if (tempActivityContent.trim() !== '') {
-        addAssignment({
-          id: generateUUID(),
-          title: tempActivityContent,
-          subject: '활동',
-          type: tempActivityType,
-          dueDate: toISODate(new Date()),
-          createdAt: new Date().toISOString(),
-          submissions: {},
-          total: students.length
-        });
-        showToast('새로운 활동이 추가되었습니다.', 'success');
-        setSelectedAssignment(null);
-      }
-      setIsEditingActivity(false);
-    }
-  }, "\uC800\uC7A5"), /*#__PURE__*/React.createElement("button", {
-    className: "activity-btn secondary",
-    onClick: () => {
-      setTempActivityContent('');
-      setTempActivityType('과제');
-      setIsEditingActivity(false);
-    }
-  }, "\uCDE8\uC18C"))) : /*#__PURE__*/React.createElement("div", {
-    className: "activity-view-mode"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "activity-text"
-  }, activeActivity ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
-    className: `badge ${activeActivity.type === '과제' ? 'badge-success' : 'badge-primary'}`
-  }, activeActivity.type || '수행평가'), /*#__PURE__*/React.createElement("span", {
-    className: "activity-label",
-    style: {
-      marginLeft: '0.5rem'
-    }
-  }, selectedAssignment ? '선택한 과제:' : '활동 내용:'), /*#__PURE__*/React.createElement("span", {
-    className: "activity-value"
-  }, activeActivity.title)) : /*#__PURE__*/React.createElement("span", {
-    className: "activity-value"
-  }, "\uD604\uC7AC \uB4F1\uB85D\uB41C \uD65C\uB3D9\uC774 \uC5C6\uC2B5\uB2C8\uB2E4. \uC0C8\uB85C \uCD94\uAC00\uD574 \uC8FC\uC138\uC694.")), isAdmin && /*#__PURE__*/React.createElement("button", {
-    className: "activity-btn edit",
-    onClick: () => {
-      setTempActivityContent('');
-      setTempActivityType('과제');
+      closeForm();
       setIsEditingActivity(true);
     }
-  }, "\uCD94\uAC00"))), /*#__PURE__*/React.createElement("div", {
-    className: "activity-students-grid"
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "plus",
+    size: 18
+  }), " \uD65C\uB3D9 \uCD94\uAC00")), isAdmin && isEditingActivity && /*#__PURE__*/React.createElement("form", {
+    className: "lrn-form",
+    onSubmit: e => {
+      e.preventDefault();
+      saveActivity();
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "mode-switch",
+    role: "group",
+    "aria-label": "\uC885\uB958"
+  }, ['과제', '수행평가'].map(t => /*#__PURE__*/React.createElement("button", {
+    key: t,
+    type: "button",
+    "aria-pressed": tempActivityType === t,
+    onClick: () => setTempActivityType(t)
+  }, t))), /*#__PURE__*/React.createElement("input", {
+    type: "text",
+    className: "form-input",
+    "aria-label": "\uD65C\uB3D9 \uB0B4\uC6A9",
+    value: tempActivityContent,
+    onChange: e => setTempActivityContent(e.target.value),
+    placeholder: "\uC608: \uC218\uD559 \uC775\uD798\uCC45 34\uCABD",
+    autoFocus: true
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "lrn-form-actions"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-secondary btn-sm",
+    onClick: closeForm
+  }, "\uCDE8\uC18C"), /*#__PURE__*/React.createElement("button", {
+    type: "submit",
+    className: "btn btn-primary btn-sm"
+  }, "\uC800\uC7A5"))), /*#__PURE__*/React.createElement("section", {
+    className: "wcard lrn-check"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wcard-head"
+  }, /*#__PURE__*/React.createElement("h2", {
+    className: "wcard-title"
+  }, "\uD65C\uB3D9 \uC644\uB8CC \uCCB4\uD06C"), activeActivity && /*#__PURE__*/React.createElement("span", {
+    className: "wcard-meta"
+  }, /*#__PURE__*/React.createElement("strong", {
+    className: "num lrn-done"
+  }, doneCount), " / ", /*#__PURE__*/React.createElement("span", {
+    className: "num"
+  }, students.length), "\uBA85 \uC644\uB8CC")), /*#__PURE__*/React.createElement("div", {
+    className: "wcard-body"
+  }, activeActivity ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "lrn-track",
+    role: "progressbar",
+    "aria-label": "\uC644\uB8CC\uC728",
+    "aria-valuenow": donePct,
+    "aria-valuemin": 0,
+    "aria-valuemax": 100
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: `${donePct}%`
+    },
+    className: donePct === 100 ? 'is-done' : ''
+  })), /*#__PURE__*/React.createElement("p", {
+    className: "lrn-hint"
+  }, "\uC774\uB984\uC744 \uB204\uB974\uBA74 \uC644\uB8CC, \uAE38\uAC8C \uB204\uB974\uBA74 \uCDE8\uC18C\uB3FC\uC694."), /*#__PURE__*/React.createElement("ul", {
+    className: "lrn-grid"
   }, students.map(student => {
-    const isCompleted = !!activeActivity?.submissions?.[student.id];
-    return /*#__PURE__*/React.createElement("div", {
-      key: student.id,
-      className: `activity-student-card ${isCompleted ? 'completed' : ''}`,
+    const isCompleted = !!activeActivity.submissions?.[student.id];
+    return /*#__PURE__*/React.createElement("li", {
+      key: student.id
+    }, /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      "aria-pressed": isCompleted,
+      className: `lrn-student ${isCompleted ? 'is-done' : ''}`,
       onPointerDown: () => handlePointerDown(student.id),
       onPointerUp: () => handlePointerUp(student.id),
       onPointerLeave: handlePointerLeave,
-      onContextMenu: e => e.preventDefault()
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "student-number"
-    }, student.number), /*#__PURE__*/React.createElement("div", {
-      className: "student-name"
-    }, student.name), isCompleted && /*#__PURE__*/React.createElement("div", {
-      className: "completed-check"
-    }, "\u2713"));
-  }))), /*#__PURE__*/React.createElement("h3", {
-    className: "section-title"
-  }, /*#__PURE__*/React.createElement("span", null, "\uD83D\uDCDD"), " \uACFC\uC81C/\uC218\uD589\uD3C9\uAC00 \uD604\uD669"), /*#__PURE__*/React.createElement("div", {
-    className: "assignment-list"
-  }, displayAssignments.length > 0 ? displayAssignments.map(a => {
-    const total = a.total || students.length;
-    const submittedCount = typeof a.submitted === 'number' ? a.submitted : Object.keys(a.submissions || {}).length;
-    const pct = Math.round(submittedCount / total * 100);
-    const remaining = total - submittedCount;
-    return /*#__PURE__*/React.createElement("div", {
-      key: a.id,
-      className: "assignment-card clickable",
-      onClick: () => setSelectedAssignment(selectedAssignment?.id === a.id ? null : a),
-      style: {
-        flexDirection: 'column',
-        alignItems: 'flex-start',
-        outline: selectedAssignment?.id === a.id ? '2px solid var(--primary)' : 'none'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        width: '100%',
-        alignItems: 'center',
-        gap: '1rem'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "assignment-icon",
-      style: {
-        background: a.type === '수행평가' ? '#FFF4ED' : '#ECFDF5'
-      }
-    }, a.type === '수행평가' ? '📋' : '📝'), /*#__PURE__*/React.createElement("div", {
-      className: "assignment-details"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "assignment-title"
-    }, a.title), /*#__PURE__*/React.createElement("div", {
-      className: "assignment-info",
-      style: {
-        display: 'flex',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-        gap: '0.5rem',
-        width: '100%'
+      onContextMenu: e => e.preventDefault(),
+      onKeyDown: e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleByKey(student.id);
+        }
       }
     }, /*#__PURE__*/React.createElement("span", {
-      className: `badge ${a.type === '수행평가' ? 'badge-primary' : 'badge-success'}`
-    }, a.type), /*#__PURE__*/React.createElement("span", null, a.subject), /*#__PURE__*/React.createElement("span", null, "\uB9C8\uAC10: ", a.dueDate), remaining > 0 && /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: 'var(--danger)'
-      }
-    }, "\uBBF8\uC81C\uCD9C ", remaining, "\uBA85"))), /*#__PURE__*/React.createElement("div", {
-      className: "assignment-progress-bar"
+      className: "att-box"
+    }), /*#__PURE__*/React.createElement("span", {
+      className: "att-no num"
+    }, student.number), /*#__PURE__*/React.createElement("span", {
+      className: "lrn-name"
+    }, student.name)));
+  }))) : /*#__PURE__*/React.createElement("div", {
+    className: "wcard-empty"
+  }, isAdmin ? '오른쪽 위 “활동 추가”로 새 활동을 만들어 주세요.' : '아직 등록된 활동이 없어요.'))), /*#__PURE__*/React.createElement("section", {
+    className: "wcard"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wcard-head"
+  }, /*#__PURE__*/React.createElement("h2", {
+    className: "wcard-title"
+  }, "\uACFC\uC81C\xB7\uC218\uD589\uD3C9\uAC00 \uD604\uD669"), /*#__PURE__*/React.createElement("span", {
+    className: "wcard-meta"
+  }, "\uB20C\uB7EC\uC11C \uC81C\uCD9C \uBA85\uB2E8 \uBCF4\uAE30")), /*#__PURE__*/React.createElement("div", {
+    className: "wcard-body"
+  }, displayAssignments.length > 0 ? /*#__PURE__*/React.createElement("ul", {
+    className: "lrn-list"
+  }, displayAssignments.map(a => {
+    const total = a.total || students.length;
+    const submittedCount = typeof a.submitted === 'number' ? a.submitted : Object.keys(a.submissions || {}).length;
+    const pct = total ? Math.round(submittedCount / total * 100) : 0;
+    const remaining = total - submittedCount;
+    const isOpen = selectedAssignment?.id === a.id;
+    const done = students.filter(s => a.submissions?.[s.id]);
+    const notDone = students.filter(s => !a.submissions?.[s.id]);
+    return /*#__PURE__*/React.createElement("li", {
+      key: a.id,
+      className: `lrn-item ${isOpen ? 'is-open' : ''}`
     }, /*#__PURE__*/React.createElement("div", {
-      className: "progress-bar"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: `progress-fill ${pct >= 80 ? 'green' : pct >= 50 ? '' : 'red'}`,
+      className: "lrn-row"
+    }, /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "lrn-row-main",
+      "aria-expanded": isOpen,
+      onClick: () => setSelectedAssignment(isOpen ? null : a.id)
+    }, /*#__PURE__*/React.createElement("span", {
+      className: `lrn-type ${a.type === '수행평가' ? 'is-eval' : ''}`
+    }, a.type), /*#__PURE__*/React.createElement("span", {
+      className: "lrn-row-text"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "lrn-row-title"
+    }, a.title), /*#__PURE__*/React.createElement("span", {
+      className: "lrn-row-meta"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "num"
+    }, a.dueDate), remaining > 0 ? /*#__PURE__*/React.createElement("span", {
+      className: "lrn-left"
+    }, "\uBBF8\uC81C\uCD9C ", remaining, "\uBA85") : /*#__PURE__*/React.createElement("span", {
+      className: "lrn-all"
+    }, "\uBAA8\uB450 \uC81C\uCD9C"))), /*#__PURE__*/React.createElement("span", {
+      className: "lrn-row-bar"
+    }, /*#__PURE__*/React.createElement("span", {
       style: {
         width: `${pct}%`
-      }
-    }))), /*#__PURE__*/React.createElement("div", {
-      className: "assignment-percentage"
-    }, pct, "%"), isAdmin && /*#__PURE__*/React.createElement("button", {
-      className: "assignment-delete-btn",
-      onClick: e => {
-        e.stopPropagation();
+      },
+      className: pct === 100 ? 'is-done' : ''
+    })), /*#__PURE__*/React.createElement("span", {
+      className: "lrn-pct num"
+    }, pct, /*#__PURE__*/React.createElement("small", null, "%"))), isAdmin && /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "icon-ghost",
+      "aria-label": `${a.title} 삭제`,
+      onClick: () => {
         if (confirm('이 항목을 정말 삭제하시겠습니까?')) {
           deleteAssignment(a.id);
+          if (isOpen) setSelectedAssignment(null);
           showToast('삭제되었습니다.', 'success');
         }
       }
-    }, "\uD83D\uDDD1\uFE0F")), selectedAssignment?.id === a.id && /*#__PURE__*/React.createElement("div", {
-      className: "assignment-students-inline",
-      style: {
-        marginTop: '1rem',
-        paddingTop: '1rem',
-        borderTop: '1px solid var(--border-light)',
-        width: '100%'
-      }
+    }, /*#__PURE__*/React.createElement(Icon, {
+      name: "trash",
+      size: 18
+    }))), isOpen && /*#__PURE__*/React.createElement("div", {
+      className: "lrn-who"
     }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        marginBottom: '0.5rem',
-        fontWeight: 600,
-        fontSize: '0.875rem',
-        color: '#059669'
-      }
-    }, "\u2705 \uC81C\uCD9C\uC790"), /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: '0.5rem',
-        marginBottom: '1rem'
-      }
-    }, students.filter(s => a.submissions?.[s.id]).map(s => /*#__PURE__*/React.createElement("button", {
+      className: "lrn-who-group"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "lrn-who-label is-done"
+    }, "\uC81C\uCD9C ", /*#__PURE__*/React.createElement("span", {
+      className: "num"
+    }, done.length)), /*#__PURE__*/React.createElement("div", {
+      className: "lrn-chips"
+    }, done.length ? done.map(s => /*#__PURE__*/React.createElement("span", {
       key: s.id,
-      className: "badge",
-      style: {
-        border: 'none',
-        background: '#D1FAE5',
-        color: '#065F46',
-        padding: '0.4rem 0.75rem',
-        fontSize: '0.875rem',
-        cursor: 'default'
-      }
-    }, s.number, ". ", s.name)), students.filter(s => a.submissions?.[s.id]).length === 0 && /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: '0.8125rem',
-        color: 'var(--text-secondary)'
-      }
-    }, "\uC81C\uCD9C\uC790\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4.")), /*#__PURE__*/React.createElement("div", {
-      style: {
-        marginBottom: '0.5rem',
-        fontWeight: 600,
-        fontSize: '0.875rem',
-        color: '#DC2626'
-      }
-    }, "\u274C \uBBF8\uC81C\uCD9C\uC790"), /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: '0.5rem'
-      }
-    }, students.filter(s => !a.submissions?.[s.id]).map(s => /*#__PURE__*/React.createElement("button", {
+      className: "lrn-chip is-done"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "num"
+    }, s.number), s.name)) : /*#__PURE__*/React.createElement("span", {
+      className: "lrn-none"
+    }, "\uC544\uC9C1 \uC5C6\uC5B4\uC694"))), /*#__PURE__*/React.createElement("div", {
+      className: "lrn-who-group"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "lrn-who-label is-left"
+    }, "\uBBF8\uC81C\uCD9C ", /*#__PURE__*/React.createElement("span", {
+      className: "num"
+    }, notDone.length)), /*#__PURE__*/React.createElement("div", {
+      className: "lrn-chips"
+    }, notDone.length ? notDone.map(s => /*#__PURE__*/React.createElement("span", {
       key: s.id,
-      className: "badge",
-      style: {
-        border: 'none',
-        background: '#FEE2E2',
-        color: '#991B1B',
-        padding: '0.4rem 0.75rem',
-        fontSize: '0.875rem',
-        cursor: 'default'
-      }
-    }, s.number, ". ", s.name)), students.filter(s => !a.submissions?.[s.id]).length === 0 && /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: '0.8125rem',
-        color: 'var(--text-secondary)'
-      }
-    }, "\uBBF8\uC81C\uCD9C\uC790\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4."))));
-  }) : /*#__PURE__*/React.createElement("div", {
-    className: "empty-state",
-    style: {
-      padding: '2rem',
-      textAlign: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("p", {
-    style: {
-      color: 'var(--text-secondary)'
-    }
-  }, "\uB4F1\uB85D\uB41C \uACFC\uC81C\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4. \uD65C\uB3D9 \uC644\uB8CC \uCCB4\uD06C\uB97C \uD558\uBA74 \uC790\uB3D9\uC73C\uB85C \uCD94\uAC00\uB429\uB2C8\uB2E4."))), totalPages > 1 && /*#__PURE__*/React.createElement("div", {
-    className: "pagination",
-    style: {
-      display: 'flex',
-      justifyContent: 'center',
-      gap: '0.5rem',
-      marginTop: '1rem'
-    }
+      className: "lrn-chip is-left"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "num"
+    }, s.number), s.name)) : /*#__PURE__*/React.createElement("span", {
+      className: "lrn-none"
+    }, "\uBAA8\uB450 \uB0C8\uC5B4\uC694")))));
+  })) : /*#__PURE__*/React.createElement("div", {
+    className: "wcard-empty"
+  }, "\uB4F1\uB85D\uB41C \uACFC\uC81C\uAC00 \uC5C6\uC5B4\uC694. \uD65C\uB3D9\uC744 \uCD94\uAC00\uD558\uBA74 \uC5EC\uAE30\uC5D0 \uC313\uC5EC\uC694."), totalPages > 1 && /*#__PURE__*/React.createElement("div", {
+    className: "lrn-pager"
   }, /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-sm",
+    type: "button",
+    className: "round-btn round-btn--sm",
+    "aria-label": "\uC774\uC804 \uCABD",
     disabled: currentPage === 1,
     onClick: () => setCurrentPage(p => Math.max(1, p - 1))
-  }, "\uC774\uC804"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: '0.875rem',
-      fontWeight: 600,
-      display: 'flex',
-      alignItems: 'center'
-    }
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "chevron",
+    size: 18
+  })), /*#__PURE__*/React.createElement("span", {
+    className: "num"
   }, currentPage, " / ", totalPages), /*#__PURE__*/React.createElement("button", {
-    className: "btn btn-sm",
+    type: "button",
+    className: "round-btn round-btn--sm wk-next",
+    "aria-label": "\uB2E4\uC74C \uCABD",
     disabled: currentPage === totalPages,
     onClick: () => setCurrentPage(p => Math.min(totalPages, p + 1))
-  }, "\uB2E4\uC74C")));
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "chevron",
+    size: 18
+  }))))));
 }
 
 /* ===================================================================
