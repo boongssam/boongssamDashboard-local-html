@@ -522,6 +522,12 @@ button.att-note-btn:hover { color: var(--ink); background: #F1ECE6; }
   .lrn-row-bar { grid-column: 2 / 4; grid-row: 2; }
 }
 
+/* ---------- 바로가기 ---------- */
+.emoji-picker { display: flex; flex-wrap: wrap; gap: 6px; }
+.emoji-opt { width: 44px; height: 44px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); font-size: 22px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; transition: background 0.15s, border-color 0.15s; }
+.emoji-opt:hover { background: #FBF8F5; border-color: #D9CFC5; }
+.emoji-opt[aria-pressed="true"] { background: var(--carrot-wash); border-color: var(--carrot-btn); box-shadow: 0 0 0 1px var(--carrot-btn) inset; }
+
 /* ---------- 모바일 ---------- */
 .mobile-nav { background: rgba(255, 253, 251, 0.97); border-top: 1px solid var(--line); box-shadow: none; }
 .mobile-nav { padding: 0 4px; }

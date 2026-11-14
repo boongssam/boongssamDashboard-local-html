@@ -4911,6 +4911,7 @@ function WeeklyPlanPage() {
 /* ===================================================================
    LinksPage
    =================================================================== */
+const LINK_EMOJIS = [['🔗', '링크'], ['🌐', '웹사이트'], ['🏫', '학교'], ['📚', '책·자료'], ['📝', '과제·문서'], ['📊', '통계·표'], ['📅', '일정'], ['💬', '소통·메신저'], ['🎬', '영상'], ['🎵', '음악'], ['🎨', '미술'], ['🧮', '수학'], ['🔬', '과학'], ['🌏', '지도·사회'], ['🎮', '게임']];
 function LinksPage() {
   const {
     state,
@@ -5000,13 +5001,32 @@ function LinksPage() {
       fontSize: '1.125rem'
     }
   }, editingId ? '링크 수정' : '새 링크 추가'), /*#__PURE__*/React.createElement("div", {
+    className: "form-group"
+  }, /*#__PURE__*/React.createElement("label", {
+    id: "link-icon-label"
+  }, "\uC544\uC774\uCF58 \uACE0\uB974\uAE30"), /*#__PURE__*/React.createElement("div", {
+    className: "emoji-picker",
+    role: "group",
+    "aria-labelledby": "link-icon-label"
+  }, LINK_EMOJIS.map(([e, name]) => /*#__PURE__*/React.createElement("button", {
+    key: e,
+    type: "button",
+    className: "emoji-opt",
+    "aria-pressed": formData.icon === e,
+    "aria-label": name,
+    title: name,
+    onClick: () => setFormData({
+      ...formData,
+      icon: e
+    })
+  }, e)))), /*#__PURE__*/React.createElement("div", {
     className: "form-row"
   }, /*#__PURE__*/React.createElement("div", {
     className: "form-group",
     style: {
       flex: 1
     }
-  }, /*#__PURE__*/React.createElement("label", null, "\uC544\uC774\uCF58 (\uC774\uBAA8\uC9C0)"), /*#__PURE__*/React.createElement("input", {
+  }, /*#__PURE__*/React.createElement("label", null, "\uC9C1\uC811 \uC785\uB825"), /*#__PURE__*/React.createElement("input", {
     className: "form-input",
     value: formData.icon,
     onChange: e => setFormData({

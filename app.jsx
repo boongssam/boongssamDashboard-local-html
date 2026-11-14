@@ -2114,6 +2114,8 @@ function WeeklyPlanPage() {
 /* ===================================================================
    LinksPage
    =================================================================== */
+const LINK_EMOJIS = [['🔗', '링크'], ['🌐', '웹사이트'], ['🏫', '학교'], ['📚', '책·자료'], ['📝', '과제·문서'], ['📊', '통계·표'], ['📅', '일정'], ['💬', '소통·메신저'], ['🎬', '영상'], ['🎵', '음악'], ['🎨', '미술'], ['🧮', '수학'], ['🔬', '과학'], ['🌏', '지도·사회'], ['🎮', '게임']];
+
 function LinksPage() {
   const { state, showToast, addLink, updateLink, deleteLink } = useApp();
   const { quickLinks, isAdmin } = state;
@@ -2138,8 +2140,14 @@ function LinksPage() {
       {isAdmin && showForm && (
         <div className="card links-form">
           <h3 style={{ marginBottom: '1rem', fontSize: '1.125rem' }}>{editingId ? '링크 수정' : '새 링크 추가'}</h3>
+          <div className="form-group">
+            <label id="link-icon-label">아이콘 고르기</label>
+            <div className="emoji-picker" role="group" aria-labelledby="link-icon-label">
+              {LINK_EMOJIS.map(([e, name]) => <button key={e} type="button" className="emoji-opt" aria-pressed={formData.icon === e} aria-label={name} title={name} onClick={() => setFormData({ ...formData, icon: e })}>{e}</button>)}
+            </div>
+          </div>
           <div className="form-row">
-            <div className="form-group" style={{ flex: 1 }}><label>아이콘 (이모지)</label><input className="form-input" value={formData.icon} onChange={e => setFormData({ ...formData, icon: e.target.value })} maxLength="2" /></div>
+            <div className="form-group" style={{ flex: 1 }}><label>직접 입력</label><input className="form-input" value={formData.icon} onChange={e => setFormData({ ...formData, icon: e.target.value })} maxLength="2" /></div>
             <div className="form-group" style={{ flex: 4 }}><label>이름</label><input className="form-input" placeholder="예: 구글 번역" value={formData.title} onChange={e => setFormData({ ...formData, title: e.target.value })} /></div>
           </div>
           <div className="form-group"><label>주소 (URL)</label><input className="form-input" placeholder="https://..." value={formData.url} onChange={e => setFormData({ ...formData, url: e.target.value })} /></div>
