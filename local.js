@@ -296,7 +296,7 @@ window.Helpers = {
 
 /* ===================== NEIS API (급식 / 학사일정) ===================== */
 const ATPT_OFCDC_SC_CODE = 'F10';
-const SD_SCHUL_CODE = '7401158';
+const SD_SCHUL_CODE = '7402204'; // 하남중앙초 (NEIS 학교기본정보에서 확인)
 const MEAL_URL = 'https://open.neis.go.kr/hub/mealServiceDietInfo';
 const SCHEDULE_URL = 'https://open.neis.go.kr/hub/SchoolSchedule';
 

@@ -1,0 +1,9 @@
+{
+  "name": "boongssam-dashboard-local-html",
+  "private": true,
+  "type": "module",
+  "description": "학급 대시보드. 화면은 정적 파일, api/ 는 학생 화면 공유용 Vercel 함수",
+  "dependencies": {
+    "@vercel/blob": "2.8.2"
+  }
+}

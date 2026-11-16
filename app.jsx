@@ -137,6 +137,53 @@ function reducer(state, action) {
   }
 }
 
+/* ===================================================================
+   학생 화면(QR) 공유 — 선생님 앱이 올리는 공개 스냅샷
+   전화번호·알레르기·생일·출결·기록·비밀번호·API 키는 절대 넣지 않음 (아래에 적은 항목만 골라 담음)
+   =================================================================== */
+const CLASS_LABEL = { school: '하남중앙초등학교', klass: '4학년 2반', teacher: '김대붕 선생님' };
+const STUDENT_API_PATH = '/api/student';
+
+// 배포된 주소에서 열면 같은 사이트의 API, 파일(file://)로 열면 설정에 넣은 배포 주소의 API
+function studentApiUrl(settings) {
+  if (location.protocol !== 'file:') return STUDENT_API_PATH;
+  const base = (settings?.studentSiteUrl || '').trim().replace(/\/+$/, '');
+  return /^https:\/\//.test(base) ? base + STUDENT_API_PATH : '';
+}
+function studentPageUrl(settings) {
+  if (location.protocol !== 'file:') return `${location.origin}${location.pathname}?student`;
+  const base = (settings?.studentSiteUrl || '').trim().replace(/\/+$/, '');
+  return /^https:\/\//.test(base) ? `${base}/?student` : '';
+}
+
+function buildStudentSnapshot(state) {
+  const { students = [], weeklyPlans = {}, ddays = [], announcements = [], quickLinks = [], settings = {} } = state;
+  const ws = getWeekStart(new Date());
+  const plans = {};
+  [-7, 0, 7, 14].forEach(off => {
+    const d = new Date(ws); d.setDate(d.getDate() + off);
+    const k = toISODate(d), wk = weeklyPlans[k];
+    if (!wk) return;
+    plans[k] = {};
+    Object.entries(wk).forEach(([day, periods]) => {
+      if (!periods || typeof periods !== 'object') return;
+      plans[k][day] = {};
+      Object.entries(periods).forEach(([p, v]) => { if (v && (v.subject || v.content)) plans[k][day][p] = { subject: v.subject || '', content: v.content || '' }; });
+    });
+  });
+  const ranked = [...students].sort((a, b) => (b.points || 0) - (a.points || 0)).slice(0, 5);
+  return {
+    v: 1,
+    label: CLASS_LABEL,
+    weeklyPlans: plans,
+    ddays: ddays.map(({ name, date, emoji }) => ({ name, date, emoji: emoji || '' })),
+    announcements: announcements.map(({ id, title, content, type, date }) => ({ id, title, content: content || '', type: type || 'general', date })),
+    thermometer: { total: students.reduce((s, x) => s + (x.points || 0), 0), goal: settings.thermometerGoal || 1500, reward: settings.thermometerReward || '' },
+    ranking: ranked.map(s => ({ name: s.name, points: s.points || 0 })),
+    links: quickLinks.filter(l => /^https?:\/\//i.test(l.url || '')).map(({ id, title, url, icon, desc }) => ({ id, title, url, icon: icon || '', desc: desc || '' })),
+  };
+}
+
 function AppProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [isDbLoading, setIsDbLoading] = useState(true);
@@ -220,6 +267,39 @@ function AppProvider({ children }) {
     if (handle) { setFolderStatus('connected'); setIsDbLoading(true); await loadFromFolder(handle); }
     else showToast('폴더 접근이 거부되었습니다.', 'error');
   };
+
+  // 학생 화면(QR) 공유: 학생에게 보여줄 내용만 골라 Vercel에 자동으로 올림 (내용이 바뀐 경우에만)
+  const [publishStatus, setPublishStatus] = useState({ state: 'off' });
+  const lastPublished = useRef('');
+  const publishTimer = useRef(null);
+  const lastPublishAt = useRef(0);
+  useEffect(() => {
+    if (isDbLoading || folderStatus !== 'connected') return;
+    const key = (state.settings.studentPublishKey || '').trim();
+    const url = studentApiUrl(state.settings);
+    if (!key || !url) { setPublishStatus({ state: 'off' }); return; }
+    const snap = buildStudentSnapshot(state);
+    const json = JSON.stringify(snap);
+    if (json === lastPublished.current) return;
+    clearTimeout(publishTimer.current);
+    // 올리기는 최소 5분 간격 (칭찬 점수를 여러 번 눌러도 Vercel 무료 한도 '쓰기 2,000회/월'을 넘지 않게)
+    const wait = Math.max(3000, lastPublishAt.current + 5 * 60 * 1000 - Date.now());
+    publishTimer.current = setTimeout(async () => {
+      lastPublishAt.current = Date.now();
+      try {
+        const res = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Publish-Key': key }, body: JSON.stringify({ ...snap, updatedAt: new Date().toISOString() }) });
+        if (!res.ok) {
+          const why = { 401: '공유 키가 Vercel에 넣은 값과 달라요', 500: 'Vercel 저장소나 공유 키 설정을 확인해 주세요', 404: '배포 주소를 확인해 주세요' }[res.status] || `오류 ${res.status}`;
+          throw new Error(why);
+        }
+        lastPublished.current = json;
+        setPublishStatus({ state: 'ok', at: new Date() });
+      } catch (e) {
+        setPublishStatus(prev => { if (prev.state !== 'error') showToast(`학생 화면에 올리지 못했어요: ${e.message}`, 'error'); return { state: 'error', message: e.message }; });
+      }
+    }, wait);
+    return () => clearTimeout(publishTimer.current);
+  }, [state.students, state.weeklyPlans, state.ddays, state.announcements, state.quickLinks, state.settings, isDbLoading, folderStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 상태가 바뀔 때마다 로컬 폴더에 저장 (디바운스)
   useEffect(() => {
@@ -328,7 +408,7 @@ function AppProvider({ children }) {
     addAssignment: addAssignmentFunc, updateAssignmentSubmissions: updateAssignmentSubmissionsFunc, deleteAssignment: deleteAssignmentFunc,
     addAnnouncement: addAnnouncementFunc, updateAnnouncement: updateAnnouncementFunc, deleteAnnouncement: deleteAnnouncementFunc,
     addPoll: addPollFunc, deletePoll: deletePollFunc,
-    login: loginFunc, logout: logoutFunc,
+    login: loginFunc, logout: logoutFunc, publishStatus,
     isDbLoading, getWeekStart, toISODate,
   };
 
@@ -491,9 +571,15 @@ function AdminSettingsModal({ onClose }) {
   const [calendarId3, setCalendarId3] = useState(settings.calendarId3 || '');
   const [geminiApiKey, setGeminiApiKey] = useState(settings.geminiApiKey || '');
   const [googleApiKey, setGoogleApiKey] = useState(settings.googleApiKey || '');
+  const [studentPublishKey, setStudentPublishKey] = useState(settings.studentPublishKey || '');
+  const [studentSiteUrl, setStudentSiteUrl] = useState(settings.studentSiteUrl || '');
+  const { publishStatus } = useApp();
+  const isFile = location.protocol === 'file:';
+  const shareUrl = studentPageUrl({ studentSiteUrl });
+  const copyShare = () => { navigator.clipboard?.writeText(shareUrl).then(() => showToast('학생용 주소를 복사했어요.', 'success'), () => showToast('복사하지 못했어요. 주소를 직접 선택해 복사해 주세요.', 'error')); };
 
   const handleSave = () => {
-    updateSettings({ ...settings, calendarId1, calendarId2, calendarId3, geminiApiKey, googleApiKey: googleApiKey.trim() });
+    updateSettings({ ...settings, calendarId1, calendarId2, calendarId3, geminiApiKey, googleApiKey: googleApiKey.trim(), studentPublishKey: studentPublishKey.trim(), studentSiteUrl: studentSiteUrl.trim() });
     showToast('설정이 저장되었습니다.', 'success');
     onClose();
   };
@@ -520,6 +606,17 @@ function AdminSettingsModal({ onClose }) {
             <label>📅 Google API 키 (주간 일정에 달력 일정 넣기)</label>
             <input type="password" className="settings-form-input" placeholder="AIza…" value={googleApiKey} onChange={e => setGoogleApiKey(e.target.value)} />
             <small className="settings-help-text">Google Cloud 콘솔에서 Calendar API를 켜고 만든 API 키를 넣으면, 위 달력들의 일정이 주간 일정 표의 해당 교시에 함께 나옵니다. 달력이 ‘공개’로 공유되어 있어야 읽을 수 있어요.</small>
+          </div>
+          <div className="settings-form-group">
+            <label htmlFor="student-publish-key">학생 화면 공유 키 (QR로 학생에게 보여주기)</label>
+            <input id="student-publish-key" type="password" className="settings-form-input" placeholder="Vercel에 넣은 STUDENT_PUBLISH_KEY 와 같은 값" value={studentPublishKey} onChange={e => setStudentPublishKey(e.target.value)} />
+            {isFile && <input aria-label="배포 주소" type="url" className="settings-form-input" style={{ marginTop: '6px' }} placeholder="배포 주소 (예: https://…vercel.app)" value={studentSiteUrl} onChange={e => setStudentSiteUrl(e.target.value)} />}
+            <small className="settings-help-text">
+              키를 넣으면 시간표·공지·D-Day·온도계·칭찬 랭킹·바로가기가 바뀔 때마다 학생 화면에 자동으로 올라가요. 전화번호·알레르기·생일·출결은 올라가지 않아요.
+              {publishStatus?.state === 'ok' && ` · 마지막으로 올림 ${publishStatus.at.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}`}
+              {publishStatus?.state === 'error' && ` · 올리지 못함: ${publishStatus.message}`}
+            </small>
+            {shareUrl && <div className="share-link"><code>{shareUrl}</code><button type="button" className="chip-btn" onClick={copyShare}>주소 복사</button></div>}
           </div>
           <div className="settings-form-group">
             <label>✨ Gemini API 키</label>
@@ -938,9 +1035,9 @@ function DashboardPage() {
 
   let headline;
   if (holiday?.isHoliday) headline = <>오늘은 <em>{holiday.name}</em>, 쉬는 날이에요</>;
-  else if (currentClass) headline = <>지금은 <em>{currentClass.period}교시 {currentClass.subject}</em>, {currentClass.end - nowMin}분 남았어요</>;
+  else if (currentClass) headline = <>지금은 <em>{currentClass.period}교시 {currentClass.subject}</em></>;
   else if (nextClass && nextClass === todaySchedule[0]) headline = <>오늘 첫 수업은 <em>{nextClass.period}교시 {nextClass.subject}</em>예요</>;
-  else if (nextClass) headline = <>다음은 <em>{nextClass.period}교시 {nextClass.subject}</em>, {nextClass.start - nowMin}분 뒤에 시작해요</>;
+  else if (nextClass) headline = <>다음은 <em>{nextClass.period}교시 {nextClass.subject}</em></>;
   else if (todaySchedule.length) headline = <>오늘 수업이 모두 끝났어요. 수고했어요!</>;
   else headline = <>오늘은 등록된 수업이 없어요</>;
 
@@ -991,6 +1088,35 @@ function DashboardPage() {
       content: (<>
         <div className="wcard-head"><h2 className="wcard-title">오늘의 시간표</h2><a href="#/weekly" className="wcard-link">주간 일정에서 수정</a></div>
         <div className="wcard-body">
+          {todaySchedule.length > 0 && (() => {
+            // 위: 지금(없으면 곧 시작할) 수업 하나를 크게, 아래: 오늘 전체 교시
+            const upNext = todaySchedule.find(c => c.start > nowMin);
+            const after = currentClass && todaySchedule.find(c => c.start > currentClass.end);
+            const f = currentClass
+              ? { key: 'now', label: '지금', c: currentClass, meta: `${minToClock(currentClass.start)}–${minToClock(currentClass.end)}`, progress: Math.round(((nowMin - currentClass.start) / (currentClass.end - currentClass.start)) * 100) }
+              : upNext && { key: 'next', label: '다음', c: upNext, meta: `${minToClock(upNext.start)}–${minToClock(upNext.end)}` };
+            return (
+              <div className="period-focus">
+                {f ? (
+                  <div className={`pf-col is-${f.key}`} data-tone={subjectTone(f.c.subject)}>
+                    <span className="pf-head">
+                      <span className="pf-label">{f.label}</span>
+                      <span className="pf-title">{f.c.period}교시 {f.c.subject}</span>
+                      {after && <span className="pf-after">다음 {after.period}교시 {after.subject} · {minToClock(after.start)}</span>}
+                    </span>
+                    <span className="pf-meta num">{f.meta}</span>
+                    <p className={`pf-content ${f.c.content ? '' : 'is-empty'}`}>{f.c.content || '주간 일정에 학습 내용을 적으면 여기에 보여요.'}</p>
+                    {f.key === 'now' && <span className="pf-bar"><span style={{ width: `${f.progress}%` }} /></span>}
+                  </div>
+                ) : (
+                  <div className="pf-col is-done">
+                    <span className="pf-head"><span className="pf-label">오늘 수업 끝</span><span className="pf-title">{todaySchedule.length}시간 수업을 모두 마쳤어요</span></span>
+                    <span className="pf-meta">내일 시간표는 주간 일정에서 미리 볼 수 있어요.</span>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           {todaySchedule.length > 0 ? (
             <ol className="periods">
               {todaySchedule.map(c => {
@@ -998,7 +1124,7 @@ function DashboardPage() {
                 const progress = status === 'now' ? Math.round(((nowMin - c.start) / (c.end - c.start)) * 100) : status === 'done' ? 100 : 0;
                 return (
                   <li key={c.period} data-tone={subjectTone(c.subject)} className={`period is-${status}`} aria-current={status === 'now' ? 'time' : undefined}>
-                    <span className="period-time">{c.period}교시 · {minToClock(c.start)}</span>
+                    <span className="period-time">{c.period}교시 {minToClock(c.start)}</span>
                     <span className="period-subject">{c.subject}</span>
                     {c.content && <span className="period-content">{c.content}</span>}
                     <span className="period-bar"><span style={{ width: `${progress}%` }} /></span>
@@ -2500,7 +2626,180 @@ function AppShell() {
   );
 }
 
+/* ===================================================================
+   StudentApp — QR로 들어온 학생용 읽기 전용 화면 (?student)
+   폴더 연결 없이 /api/student 에 선생님이 올린 내용만 보여줌. 급식은 NEIS에서 바로 가져옴
+   =================================================================== */
+function StudentApp() {
+  const [data, setData] = useState(null);
+  const [problem, setProblem] = useState('');
+  const [lunch, setLunch] = useState(undefined);
+  const [now, setNow] = useState(() => new Date());
+  const hasData = useRef(false);
+
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const res = await fetch(STUDENT_API_PATH, { cache: 'no-store' });
+        if (res.status === 404) { if (alive && !hasData.current) setProblem('아직 선생님이 학생 화면을 올리지 않았어요.'); return; }
+        if (!res.ok) throw new Error(String(res.status));
+        const j = await res.json();
+        if (alive) { hasData.current = true; setData(j); setProblem(''); }
+      } catch (e) {
+        if (alive && !hasData.current) setProblem('내용을 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침해 주세요.');
+      }
+    };
+    load();
+    fetchTodayLunch().then(l => { if (alive) setLunch(l); });
+    const t = setInterval(() => { load(); setNow(new Date()); }, 60000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+
+  const label = data?.label || CLASS_LABEL;
+  const dayName = getDayName(now);
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const weekKey = toISODate(getWeekStart(now));
+  const week = data?.weeklyPlans?.[weekKey] || {};
+  const today = Object.entries(week[dayName] || {}).map(([p, v]) => ({ period: Number(p), ...v }))
+    .filter(c => c.subject && PERIOD_SLOTS[c.period]).sort((a, b) => a.period - b.period)
+    .map(c => ({ ...c, start: PERIOD_SLOTS[c.period][0], end: PERIOD_SLOTS[c.period][1] }));
+  const current = today.find(c => nowMin >= c.start && nowMin <= c.end);
+  const next = today.find(c => c.start > nowMin);
+  const headline = current ? <>지금은 <em>{current.period}교시 {current.subject}</em></>
+    : next ? <>다음은 <em>{next.period}교시 {next.subject}</em></>
+    : today.length ? <>오늘 수업이 모두 끝났어요</> : <>오늘은 등록된 수업이 없어요</>;
+
+  const ddays = (data?.ddays || []).filter(ev => !getDday(ev.date).startsWith('D+')).sort((a, b) => new Date(a.date) - new Date(b.date));
+  const th = data?.thermometer;
+  const pct = th ? Math.min(100, (th.total / Math.max(1, th.goal)) * 100) : 0;
+  const topScore = Math.max(1, data?.ranking?.[0]?.points || 0);
+  const lunchItems = lunch ? lunch.menu.split('\n').map(s => s.trim()).filter(Boolean) : [];
+  const typeLabel = { important: '중요', newsletter: '통신문', general: '일반' };
+  const shortDate = (iso) => { const d = new Date(iso); return `${d.getMonth() + 1}월 ${d.getDate()}일 ${getDayName(d)}요일`; };
+
+  return (
+    <div className="stu">
+      <header className="stu-top">
+        <span className="logo-mark">4·2</span>
+        <div className="stu-who"><strong>{label.school}</strong><span>{label.klass} · {label.teacher}</span></div>
+      </header>
+      <div className="stu-hero">
+        <span className="page-date">{now.getMonth() + 1}월 {now.getDate()}일 {dayName}요일</span>
+        <h1 className="dash-headline">{headline}</h1>
+      </div>
+
+      {problem && !data && <div className="stu-msg">{problem}</div>}
+
+      {data && (<>
+        <section className="wcard" aria-label="오늘의 시간표">
+          <div className="wcard-head"><h2 className="wcard-title">오늘의 시간표</h2></div>
+          <div className="wcard-body">
+            {today.length ? (
+              <ol className="stu-periods">
+                {today.map(c => (
+                  <li key={c.period} data-tone={subjectTone(c.subject)} className={nowMin > c.end ? 'is-done' : c === current ? 'is-now' : ''} aria-current={c === current ? 'time' : undefined}>
+                    <span className="stu-p-time num">{c.period}교시<br />{minToClock(c.start)}</span>
+                    <span className="stu-p-main"><span className="period-subject">{c.subject}</span>{c.content && <span className="stu-p-content">{c.content}</span>}</span>
+                  </li>
+                ))}
+              </ol>
+            ) : <div className="wcard-empty">오늘은 등록된 수업이 없어요.</div>}
+          </div>
+        </section>
+      </>)}
+
+      <section className="wcard" aria-label="오늘의 급식">
+        <div className="wcard-head"><h2 className="wcard-title">오늘의 급식</h2>{lunch?.calories && <span className="wcard-meta num">{lunch.calories}</span>}</div>
+        <div className="wcard-body">
+          {lunch === undefined ? <div className="wcard-empty">식단표를 불러오는 중이에요…</div>
+            : lunchItems.length ? <ul className="lunch-list">{lunchItems.map((m, i) => <li key={i}>{m}</li>)}</ul>
+            : <div className="wcard-empty">오늘은 급식 정보가 없어요.</div>}
+        </div>
+      </section>
+
+      {data && (<>
+        {ddays.length > 0 && (
+          <section className="wcard" aria-label="다가오는 날">
+            <div className="wcard-head"><h2 className="wcard-title">다가오는 날</h2></div>
+            <div className="wcard-body">
+              <ul className="dday-rows">
+                {ddays.map((ev, i) => (
+                  <li key={i} className={`dday-row ${i === 0 ? 'is-next' : ''}`}>
+                    <span className="dday-num num">{getDday(ev.date)}</span>
+                    <span className="dday-text"><span className="dday-title">{ev.emoji ? `${ev.emoji} ` : ''}{ev.name}</span><span className="dday-when">{shortDate(ev.date)}</span></span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </section>
+        )}
+
+        {data.announcements?.length > 0 && (
+          <section className="wcard" aria-label="공지사항">
+            <div className="wcard-head"><h2 className="wcard-title">공지사항</h2></div>
+            <div className="wcard-body">
+              <div className="notice-grid">
+                {data.announcements.map(n => (
+                  <article key={n.id} className={`notice-card is-${n.type}`}>
+                    <div className="notice-card-top"><span className={`notice-tag is-${n.type}`}>{typeLabel[n.type] || '일반'}</span><span className="notice-date num">{(n.date || '').slice(5).replace('-', '.')}</span></div>
+                    <h3 className="notice-card-title">{n.title}</h3>
+                    {n.content && <p className="notice-card-body">{n.content}</p>}
+                  </article>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {th && (
+          <section className="wcard wcard--accent" aria-label="우리 반 칭찬 온도계">
+            <div className="wcard-head"><h2 className="wcard-title">우리 반 칭찬 온도계</h2></div>
+            <div className="wcard-body thermo">
+              <div className="thermo-score"><span className="num-xl">{th.total}</span><span className="thermo-goal">/ {th.goal}점</span></div>
+              <div className="thermo-track" role="progressbar" aria-label="칭찬 점수" aria-valuemin={0} aria-valuemax={th.goal} aria-valuenow={th.total}><span className={th.total >= th.goal ? 'is-done' : ''} style={{ width: `${pct}%` }} /></div>
+              {th.reward && <p className="thermo-note">{th.total >= th.goal ? <><strong>목표 달성!</strong> 이제 <strong>{th.reward}</strong> 시간이에요.</> : <><strong>{th.goal - th.total}점만 더!</strong> 목표를 채우면 <strong>{th.reward}</strong>을(를) 해요.</>}</p>}
+            </div>
+          </section>
+        )}
+
+        {data.ranking?.length > 0 && (
+          <section className="wcard" aria-label="칭찬 랭킹">
+            <div className="wcard-head"><h2 className="wcard-title">칭찬 랭킹</h2><span className="wcard-meta">상위 5명</span></div>
+            <div className="wcard-body">
+              <ol className="rank-list">
+                {data.ranking.map((s, idx) => (
+                  <li key={idx} className={idx === 0 ? 'is-first' : ''}>
+                    <span className="rank-no num">{idx + 1}</span><span className="rank-name">{s.name}</span><span className="rank-score num">{s.points}</span>
+                    <span className="rank-bar"><span style={{ width: `${Math.round((s.points / topScore) * 100)}%` }} /></span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </section>
+        )}
+
+        {data.links?.length > 0 && (
+          <section className="wcard" aria-label="바로가기">
+            <div className="wcard-head"><h2 className="wcard-title">바로가기</h2></div>
+            <div className="wcard-body">
+              <ul className="stu-links">
+                {data.links.filter(l => /^https?:\/\//i.test(l.url)).map(l => (
+                  <li key={l.id || l.url}><a href={l.url} target="_blank" rel="noopener noreferrer"><span className="stu-link-icon" aria-hidden="true">{l.icon || '🔗'}</span><span className="stu-link-text"><strong>{l.title}</strong>{l.desc && <span>{l.desc}</span>}</span></a></li>
+                ))}
+              </ul>
+            </div>
+          </section>
+        )}
+
+        {data.updatedAt && <p className="stu-foot">선생님이 {new Date(data.updatedAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}에 올린 내용이에요. 1분마다 새로 확인해요.</p>}
+      </>)}
+    </div>
+  );
+}
+
 function Root() {
+  if (new URLSearchParams(location.search).has('student')) return <StudentApp />;
   return (<AppProvider><AppShell /></AppProvider>);
 }
 

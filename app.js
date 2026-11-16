@@ -434,6 +434,109 @@ function reducer(state, action) {
       return state;
   }
 }
+
+/* ===================================================================
+   학생 화면(QR) 공유 — 선생님 앱이 올리는 공개 스냅샷
+   전화번호·알레르기·생일·출결·기록·비밀번호·API 키는 절대 넣지 않음 (아래에 적은 항목만 골라 담음)
+   =================================================================== */
+const CLASS_LABEL = {
+  school: '하남중앙초등학교',
+  klass: '4학년 2반',
+  teacher: '김대붕 선생님'
+};
+const STUDENT_API_PATH = '/api/student';
+
+// 배포된 주소에서 열면 같은 사이트의 API, 파일(file://)로 열면 설정에 넣은 배포 주소의 API
+function studentApiUrl(settings) {
+  if (location.protocol !== 'file:') return STUDENT_API_PATH;
+  const base = (settings?.studentSiteUrl || '').trim().replace(/\/+$/, '');
+  return /^https:\/\//.test(base) ? base + STUDENT_API_PATH : '';
+}
+function studentPageUrl(settings) {
+  if (location.protocol !== 'file:') return `${location.origin}${location.pathname}?student`;
+  const base = (settings?.studentSiteUrl || '').trim().replace(/\/+$/, '');
+  return /^https:\/\//.test(base) ? `${base}/?student` : '';
+}
+function buildStudentSnapshot(state) {
+  const {
+    students = [],
+    weeklyPlans = {},
+    ddays = [],
+    announcements = [],
+    quickLinks = [],
+    settings = {}
+  } = state;
+  const ws = getWeekStart(new Date());
+  const plans = {};
+  [-7, 0, 7, 14].forEach(off => {
+    const d = new Date(ws);
+    d.setDate(d.getDate() + off);
+    const k = toISODate(d),
+      wk = weeklyPlans[k];
+    if (!wk) return;
+    plans[k] = {};
+    Object.entries(wk).forEach(([day, periods]) => {
+      if (!periods || typeof periods !== 'object') return;
+      plans[k][day] = {};
+      Object.entries(periods).forEach(([p, v]) => {
+        if (v && (v.subject || v.content)) plans[k][day][p] = {
+          subject: v.subject || '',
+          content: v.content || ''
+        };
+      });
+    });
+  });
+  const ranked = [...students].sort((a, b) => (b.points || 0) - (a.points || 0)).slice(0, 5);
+  return {
+    v: 1,
+    label: CLASS_LABEL,
+    weeklyPlans: plans,
+    ddays: ddays.map(({
+      name,
+      date,
+      emoji
+    }) => ({
+      name,
+      date,
+      emoji: emoji || ''
+    })),
+    announcements: announcements.map(({
+      id,
+      title,
+      content,
+      type,
+      date
+    }) => ({
+      id,
+      title,
+      content: content || '',
+      type: type || 'general',
+      date
+    })),
+    thermometer: {
+      total: students.reduce((s, x) => s + (x.points || 0), 0),
+      goal: settings.thermometerGoal || 1500,
+      reward: settings.thermometerReward || ''
+    },
+    ranking: ranked.map(s => ({
+      name: s.name,
+      points: s.points || 0
+    })),
+    links: quickLinks.filter(l => /^https?:\/\//i.test(l.url || '')).map(({
+      id,
+      title,
+      url,
+      icon,
+      desc
+    }) => ({
+      id,
+      title,
+      url,
+      icon: icon || '',
+      desc: desc || ''
+    }))
+  };
+}
 function AppProvider({
   children
 }) {
@@ -589,6 +692,69 @@ function AppProvider({
       await loadFromFolder(handle);
     } else showToast('폴더 접근이 거부되었습니다.', 'error');
   };
+
+  // 학생 화면(QR) 공유: 학생에게 보여줄 내용만 골라 Vercel에 자동으로 올림 (내용이 바뀐 경우에만)
+  const [publishStatus, setPublishStatus] = useState({
+    state: 'off'
+  });
+  const lastPublished = useRef('');
+  const publishTimer = useRef(null);
+  const lastPublishAt = useRef(0);
+  useEffect(() => {
+    if (isDbLoading || folderStatus !== 'connected') return;
+    const key = (state.settings.studentPublishKey || '').trim();
+    const url = studentApiUrl(state.settings);
+    if (!key || !url) {
+      setPublishStatus({
+        state: 'off'
+      });
+      return;
+    }
+    const snap = buildStudentSnapshot(state);
+    const json = JSON.stringify(snap);
+    if (json === lastPublished.current) return;
+    clearTimeout(publishTimer.current);
+    // 올리기는 최소 5분 간격 (칭찬 점수를 여러 번 눌러도 Vercel 무료 한도 '쓰기 2,000회/월'을 넘지 않게)
+    const wait = Math.max(3000, lastPublishAt.current + 5 * 60 * 1000 - Date.now());
+    publishTimer.current = setTimeout(async () => {
+      lastPublishAt.current = Date.now();
+      try {
+        const res = await fetch(url, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Publish-Key': key
+          },
+          body: JSON.stringify({
+            ...snap,
+            updatedAt: new Date().toISOString()
+          })
+        });
+        if (!res.ok) {
+          const why = {
+            401: '공유 키가 Vercel에 넣은 값과 달라요',
+            500: 'Vercel 저장소나 공유 키 설정을 확인해 주세요',
+            404: '배포 주소를 확인해 주세요'
+          }[res.status] || `오류 ${res.status}`;
+          throw new Error(why);
+        }
+        lastPublished.current = json;
+        setPublishStatus({
+          state: 'ok',
+          at: new Date()
+        });
+      } catch (e) {
+        setPublishStatus(prev => {
+          if (prev.state !== 'error') showToast(`학생 화면에 올리지 못했어요: ${e.message}`, 'error');
+          return {
+            state: 'error',
+            message: e.message
+          };
+        });
+      }
+    }, wait);
+    return () => clearTimeout(publishTimer.current);
+  }, [state.students, state.weeklyPlans, state.ddays, state.announcements, state.quickLinks, state.settings, isDbLoading, folderStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 상태가 바뀔 때마다 로컬 폴더에 저장 (디바운스)
   useEffect(() => {
@@ -853,6 +1019,7 @@ function AppProvider({
     deletePoll: deletePollFunc,
     login: loginFunc,
     logout: logoutFunc,
+    publishStatus,
     isDbLoading,
     getWeekStart,
     toISODate
@@ -1196,6 +1363,18 @@ function AdminSettingsModal({
   const [calendarId3, setCalendarId3] = useState(settings.calendarId3 || '');
   const [geminiApiKey, setGeminiApiKey] = useState(settings.geminiApiKey || '');
   const [googleApiKey, setGoogleApiKey] = useState(settings.googleApiKey || '');
+  const [studentPublishKey, setStudentPublishKey] = useState(settings.studentPublishKey || '');
+  const [studentSiteUrl, setStudentSiteUrl] = useState(settings.studentSiteUrl || '');
+  const {
+    publishStatus
+  } = useApp();
+  const isFile = location.protocol === 'file:';
+  const shareUrl = studentPageUrl({
+    studentSiteUrl
+  });
+  const copyShare = () => {
+    navigator.clipboard?.writeText(shareUrl).then(() => showToast('학생용 주소를 복사했어요.', 'success'), () => showToast('복사하지 못했어요. 주소를 직접 선택해 복사해 주세요.', 'error'));
+  };
   const handleSave = () => {
     updateSettings({
       ...settings,
@@ -1203,7 +1382,9 @@ function AdminSettingsModal({
       calendarId2,
       calendarId3,
       geminiApiKey,
-      googleApiKey: googleApiKey.trim()
+      googleApiKey: googleApiKey.trim(),
+      studentPublishKey: studentPublishKey.trim(),
+      studentSiteUrl: studentSiteUrl.trim()
     });
     showToast('설정이 저장되었습니다.', 'success');
     onClose();
@@ -1256,6 +1437,38 @@ function AdminSettingsModal({
   }), /*#__PURE__*/React.createElement("small", {
     className: "settings-help-text"
   }, "Google Cloud \uCF58\uC194\uC5D0\uC11C Calendar API\uB97C \uCF1C\uACE0 \uB9CC\uB4E0 API \uD0A4\uB97C \uB123\uC73C\uBA74, \uC704 \uB2EC\uB825\uB4E4\uC758 \uC77C\uC815\uC774 \uC8FC\uAC04 \uC77C\uC815 \uD45C\uC758 \uD574\uB2F9 \uAD50\uC2DC\uC5D0 \uD568\uAED8 \uB098\uC635\uB2C8\uB2E4. \uB2EC\uB825\uC774 \u2018\uACF5\uAC1C\u2019\uB85C \uACF5\uC720\uB418\uC5B4 \uC788\uC5B4\uC57C \uC77D\uC744 \uC218 \uC788\uC5B4\uC694.")), /*#__PURE__*/React.createElement("div", {
+    className: "settings-form-group"
+  }, /*#__PURE__*/React.createElement("label", {
+    htmlFor: "student-publish-key"
+  }, "\uD559\uC0DD \uD654\uBA74 \uACF5\uC720 \uD0A4 (QR\uB85C \uD559\uC0DD\uC5D0\uAC8C \uBCF4\uC5EC\uC8FC\uAE30)"), /*#__PURE__*/React.createElement("input", {
+    id: "student-publish-key",
+    type: "password",
+    className: "settings-form-input",
+    placeholder: "Vercel\uC5D0 \uB123\uC740 STUDENT_PUBLISH_KEY \uC640 \uAC19\uC740 \uAC12",
+    value: studentPublishKey,
+    onChange: e => setStudentPublishKey(e.target.value)
+  }), isFile && /*#__PURE__*/React.createElement("input", {
+    "aria-label": "\uBC30\uD3EC \uC8FC\uC18C",
+    type: "url",
+    className: "settings-form-input",
+    style: {
+      marginTop: '6px'
+    },
+    placeholder: "\uBC30\uD3EC \uC8FC\uC18C (\uC608: https://\u2026vercel.app)",
+    value: studentSiteUrl,
+    onChange: e => setStudentSiteUrl(e.target.value)
+  }), /*#__PURE__*/React.createElement("small", {
+    className: "settings-help-text"
+  }, "\uD0A4\uB97C \uB123\uC73C\uBA74 \uC2DC\uAC04\uD45C\xB7\uACF5\uC9C0\xB7D-Day\xB7\uC628\uB3C4\uACC4\xB7\uCE6D\uCC2C \uB7AD\uD0B9\xB7\uBC14\uB85C\uAC00\uAE30\uAC00 \uBC14\uB014 \uB54C\uB9C8\uB2E4 \uD559\uC0DD \uD654\uBA74\uC5D0 \uC790\uB3D9\uC73C\uB85C \uC62C\uB77C\uAC00\uC694. \uC804\uD654\uBC88\uD638\xB7\uC54C\uB808\uB974\uAE30\xB7\uC0DD\uC77C\xB7\uCD9C\uACB0\uC740 \uC62C\uB77C\uAC00\uC9C0 \uC54A\uC544\uC694.", publishStatus?.state === 'ok' && ` · 마지막으로 올림 ${publishStatus.at.toLocaleTimeString('ko-KR', {
+    hour: '2-digit',
+    minute: '2-digit'
+  })}`, publishStatus?.state === 'error' && ` · 올리지 못함: ${publishStatus.message}`), shareUrl && /*#__PURE__*/React.createElement("div", {
+    className: "share-link"
+  }, /*#__PURE__*/React.createElement("code", null, shareUrl), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "chip-btn",
+    onClick: copyShare
+  }, "\uC8FC\uC18C \uBCF5\uC0AC"))), /*#__PURE__*/React.createElement("div", {
     className: "settings-form-group"
   }, /*#__PURE__*/React.createElement("label", null, "\u2728 Gemini API \uD0A4"), /*#__PURE__*/React.createElement("input", {
     type: "password",
@@ -2113,7 +2326,7 @@ function DashboardPage() {
   const currentClass = todaySchedule.find(c => nowMin >= c.start && nowMin <= c.end);
   const nextClass = todaySchedule.find(c => c.start > nowMin);
   let headline;
-  if (holiday?.isHoliday) headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uC624\uB298\uC740 ", /*#__PURE__*/React.createElement("em", null, holiday.name), ", \uC26C\uB294 \uB0A0\uC774\uC5D0\uC694");else if (currentClass) headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uC9C0\uAE08\uC740 ", /*#__PURE__*/React.createElement("em", null, currentClass.period, "\uAD50\uC2DC ", currentClass.subject), ", ", currentClass.end - nowMin, "\uBD84 \uB0A8\uC558\uC5B4\uC694");else if (nextClass && nextClass === todaySchedule[0]) headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uC624\uB298 \uCCAB \uC218\uC5C5\uC740 ", /*#__PURE__*/React.createElement("em", null, nextClass.period, "\uAD50\uC2DC ", nextClass.subject), "\uC608\uC694");else if (nextClass) headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uB2E4\uC74C\uC740 ", /*#__PURE__*/React.createElement("em", null, nextClass.period, "\uAD50\uC2DC ", nextClass.subject), ", ", nextClass.start - nowMin, "\uBD84 \uB4A4\uC5D0 \uC2DC\uC791\uD574\uC694");else if (todaySchedule.length) headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uC624\uB298 \uC218\uC5C5\uC774 \uBAA8\uB450 \uB05D\uB0AC\uC5B4\uC694. \uC218\uACE0\uD588\uC5B4\uC694!");else headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uC624\uB298\uC740 \uB4F1\uB85D\uB41C \uC218\uC5C5\uC774 \uC5C6\uC5B4\uC694");
+  if (holiday?.isHoliday) headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uC624\uB298\uC740 ", /*#__PURE__*/React.createElement("em", null, holiday.name), ", \uC26C\uB294 \uB0A0\uC774\uC5D0\uC694");else if (currentClass) headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uC9C0\uAE08\uC740 ", /*#__PURE__*/React.createElement("em", null, currentClass.period, "\uAD50\uC2DC ", currentClass.subject));else if (nextClass && nextClass === todaySchedule[0]) headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uC624\uB298 \uCCAB \uC218\uC5C5\uC740 ", /*#__PURE__*/React.createElement("em", null, nextClass.period, "\uAD50\uC2DC ", nextClass.subject), "\uC608\uC694");else if (nextClass) headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uB2E4\uC74C\uC740 ", /*#__PURE__*/React.createElement("em", null, nextClass.period, "\uAD50\uC2DC ", nextClass.subject));else if (todaySchedule.length) headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uC624\uB298 \uC218\uC5C5\uC774 \uBAA8\uB450 \uB05D\uB0AC\uC5B4\uC694. \uC218\uACE0\uD588\uC5B4\uC694!");else headline = /*#__PURE__*/React.createElement(React.Fragment, null, "\uC624\uB298\uC740 \uB4F1\uB85D\uB41C \uC218\uC5C5\uC774 \uC5C6\uC5B4\uC694");
   const birthdayStudents = students.filter(s => isTodayBirthday(s.birthday));
   // 20일 안의 학생 생일·구글 달력 일정을 자동으로 함께 보여줌 (열 때마다 계산, 직접 넣은 D-Day와 섞어 날짜순)
   const AUTO_DDAY_LIMIT = 20;
@@ -2223,7 +2436,57 @@ function DashboardPage() {
         className: "wcard-link"
       }, "\uC8FC\uAC04 \uC77C\uC815\uC5D0\uC11C \uC218\uC815")), /*#__PURE__*/React.createElement("div", {
         className: "wcard-body"
-      }, todaySchedule.length > 0 ? /*#__PURE__*/React.createElement("ol", {
+      }, todaySchedule.length > 0 && (() => {
+        // 위: 지금(없으면 곧 시작할) 수업 하나를 크게, 아래: 오늘 전체 교시
+        const upNext = todaySchedule.find(c => c.start > nowMin);
+        const after = currentClass && todaySchedule.find(c => c.start > currentClass.end);
+        const f = currentClass ? {
+          key: 'now',
+          label: '지금',
+          c: currentClass,
+          meta: `${minToClock(currentClass.start)}–${minToClock(currentClass.end)}`,
+          progress: Math.round((nowMin - currentClass.start) / (currentClass.end - currentClass.start) * 100)
+        } : upNext && {
+          key: 'next',
+          label: '다음',
+          c: upNext,
+          meta: `${minToClock(upNext.start)}–${minToClock(upNext.end)}`
+        };
+        return /*#__PURE__*/React.createElement("div", {
+          className: "period-focus"
+        }, f ? /*#__PURE__*/React.createElement("div", {
+          className: `pf-col is-${f.key}`,
+          "data-tone": subjectTone(f.c.subject)
+        }, /*#__PURE__*/React.createElement("span", {
+          className: "pf-head"
+        }, /*#__PURE__*/React.createElement("span", {
+          className: "pf-label"
+        }, f.label), /*#__PURE__*/React.createElement("span", {
+          className: "pf-title"
+        }, f.c.period, "\uAD50\uC2DC ", f.c.subject), after && /*#__PURE__*/React.createElement("span", {
+          className: "pf-after"
+        }, "\uB2E4\uC74C ", after.period, "\uAD50\uC2DC ", after.subject, " \xB7 ", minToClock(after.start))), /*#__PURE__*/React.createElement("span", {
+          className: "pf-meta num"
+        }, f.meta), /*#__PURE__*/React.createElement("p", {
+          className: `pf-content ${f.c.content ? '' : 'is-empty'}`
+        }, f.c.content || '주간 일정에 학습 내용을 적으면 여기에 보여요.'), f.key === 'now' && /*#__PURE__*/React.createElement("span", {
+          className: "pf-bar"
+        }, /*#__PURE__*/React.createElement("span", {
+          style: {
+            width: `${f.progress}%`
+          }
+        }))) : /*#__PURE__*/React.createElement("div", {
+          className: "pf-col is-done"
+        }, /*#__PURE__*/React.createElement("span", {
+          className: "pf-head"
+        }, /*#__PURE__*/React.createElement("span", {
+          className: "pf-label"
+        }, "\uC624\uB298 \uC218\uC5C5 \uB05D"), /*#__PURE__*/React.createElement("span", {
+          className: "pf-title"
+        }, todaySchedule.length, "\uC2DC\uAC04 \uC218\uC5C5\uC744 \uBAA8\uB450 \uB9C8\uCCE4\uC5B4\uC694")), /*#__PURE__*/React.createElement("span", {
+          className: "pf-meta"
+        }, "\uB0B4\uC77C \uC2DC\uAC04\uD45C\uB294 \uC8FC\uAC04 \uC77C\uC815\uC5D0\uC11C \uBBF8\uB9AC \uBCFC \uC218 \uC788\uC5B4\uC694.")));
+      })(), todaySchedule.length > 0 ? /*#__PURE__*/React.createElement("ol", {
         className: "periods"
       }, todaySchedule.map(c => {
         const status = nowMin > c.end ? 'done' : currentClass === c ? 'now' : 'next';
@@ -2235,7 +2498,7 @@ function DashboardPage() {
           "aria-current": status === 'now' ? 'time' : undefined
         }, /*#__PURE__*/React.createElement("span", {
           className: "period-time"
-        }, c.period, "\uAD50\uC2DC \xB7 ", minToClock(c.start)), /*#__PURE__*/React.createElement("span", {
+        }, c.period, "\uAD50\uC2DC ", minToClock(c.start)), /*#__PURE__*/React.createElement("span", {
           className: "period-subject"
         }, c.subject), c.content && /*#__PURE__*/React.createElement("span", {
           className: "period-content"
@@ -5541,7 +5804,279 @@ function AppShell() {
     pathname: pathname
   }, /*#__PURE__*/React.createElement(Page, null)), /*#__PURE__*/React.createElement(Toast, null));
 }
+
+/* ===================================================================
+   StudentApp — QR로 들어온 학생용 읽기 전용 화면 (?student)
+   폴더 연결 없이 /api/student 에 선생님이 올린 내용만 보여줌. 급식은 NEIS에서 바로 가져옴
+   =================================================================== */
+function StudentApp() {
+  const [data, setData] = useState(null);
+  const [problem, setProblem] = useState('');
+  const [lunch, setLunch] = useState(undefined);
+  const [now, setNow] = useState(() => new Date());
+  const hasData = useRef(false);
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const res = await fetch(STUDENT_API_PATH, {
+          cache: 'no-store'
+        });
+        if (res.status === 404) {
+          if (alive && !hasData.current) setProblem('아직 선생님이 학생 화면을 올리지 않았어요.');
+          return;
+        }
+        if (!res.ok) throw new Error(String(res.status));
+        const j = await res.json();
+        if (alive) {
+          hasData.current = true;
+          setData(j);
+          setProblem('');
+        }
+      } catch (e) {
+        if (alive && !hasData.current) setProblem('내용을 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침해 주세요.');
+      }
+    };
+    load();
+    fetchTodayLunch().then(l => {
+      if (alive) setLunch(l);
+    });
+    const t = setInterval(() => {
+      load();
+      setNow(new Date());
+    }, 60000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
+  const label = data?.label || CLASS_LABEL;
+  const dayName = getDayName(now);
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const weekKey = toISODate(getWeekStart(now));
+  const week = data?.weeklyPlans?.[weekKey] || {};
+  const today = Object.entries(week[dayName] || {}).map(([p, v]) => ({
+    period: Number(p),
+    ...v
+  })).filter(c => c.subject && PERIOD_SLOTS[c.period]).sort((a, b) => a.period - b.period).map(c => ({
+    ...c,
+    start: PERIOD_SLOTS[c.period][0],
+    end: PERIOD_SLOTS[c.period][1]
+  }));
+  const current = today.find(c => nowMin >= c.start && nowMin <= c.end);
+  const next = today.find(c => c.start > nowMin);
+  const headline = current ? /*#__PURE__*/React.createElement(React.Fragment, null, "\uC9C0\uAE08\uC740 ", /*#__PURE__*/React.createElement("em", null, current.period, "\uAD50\uC2DC ", current.subject)) : next ? /*#__PURE__*/React.createElement(React.Fragment, null, "\uB2E4\uC74C\uC740 ", /*#__PURE__*/React.createElement("em", null, next.period, "\uAD50\uC2DC ", next.subject)) : today.length ? /*#__PURE__*/React.createElement(React.Fragment, null, "\uC624\uB298 \uC218\uC5C5\uC774 \uBAA8\uB450 \uB05D\uB0AC\uC5B4\uC694") : /*#__PURE__*/React.createElement(React.Fragment, null, "\uC624\uB298\uC740 \uB4F1\uB85D\uB41C \uC218\uC5C5\uC774 \uC5C6\uC5B4\uC694");
+  const ddays = (data?.ddays || []).filter(ev => !getDday(ev.date).startsWith('D+')).sort((a, b) => new Date(a.date) - new Date(b.date));
+  const th = data?.thermometer;
+  const pct = th ? Math.min(100, th.total / Math.max(1, th.goal) * 100) : 0;
+  const topScore = Math.max(1, data?.ranking?.[0]?.points || 0);
+  const lunchItems = lunch ? lunch.menu.split('\n').map(s => s.trim()).filter(Boolean) : [];
+  const typeLabel = {
+    important: '중요',
+    newsletter: '통신문',
+    general: '일반'
+  };
+  const shortDate = iso => {
+    const d = new Date(iso);
+    return `${d.getMonth() + 1}월 ${d.getDate()}일 ${getDayName(d)}요일`;
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "stu"
+  }, /*#__PURE__*/React.createElement("header", {
+    className: "stu-top"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "logo-mark"
+  }, "4\xB72"), /*#__PURE__*/React.createElement("div", {
+    className: "stu-who"
+  }, /*#__PURE__*/React.createElement("strong", null, label.school), /*#__PURE__*/React.createElement("span", null, label.klass, " \xB7 ", label.teacher))), /*#__PURE__*/React.createElement("div", {
+    className: "stu-hero"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "page-date"
+  }, now.getMonth() + 1, "\uC6D4 ", now.getDate(), "\uC77C ", dayName, "\uC694\uC77C"), /*#__PURE__*/React.createElement("h1", {
+    className: "dash-headline"
+  }, headline)), problem && !data && /*#__PURE__*/React.createElement("div", {
+    className: "stu-msg"
+  }, problem), data && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("section", {
+    className: "wcard",
+    "aria-label": "\uC624\uB298\uC758 \uC2DC\uAC04\uD45C"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wcard-head"
+  }, /*#__PURE__*/React.createElement("h2", {
+    className: "wcard-title"
+  }, "\uC624\uB298\uC758 \uC2DC\uAC04\uD45C")), /*#__PURE__*/React.createElement("div", {
+    className: "wcard-body"
+  }, today.length ? /*#__PURE__*/React.createElement("ol", {
+    className: "stu-periods"
+  }, today.map(c => /*#__PURE__*/React.createElement("li", {
+    key: c.period,
+    "data-tone": subjectTone(c.subject),
+    className: nowMin > c.end ? 'is-done' : c === current ? 'is-now' : '',
+    "aria-current": c === current ? 'time' : undefined
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "stu-p-time num"
+  }, c.period, "\uAD50\uC2DC", /*#__PURE__*/React.createElement("br", null), minToClock(c.start)), /*#__PURE__*/React.createElement("span", {
+    className: "stu-p-main"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "period-subject"
+  }, c.subject), c.content && /*#__PURE__*/React.createElement("span", {
+    className: "stu-p-content"
+  }, c.content))))) : /*#__PURE__*/React.createElement("div", {
+    className: "wcard-empty"
+  }, "\uC624\uB298\uC740 \uB4F1\uB85D\uB41C \uC218\uC5C5\uC774 \uC5C6\uC5B4\uC694.")))), /*#__PURE__*/React.createElement("section", {
+    className: "wcard",
+    "aria-label": "\uC624\uB298\uC758 \uAE09\uC2DD"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wcard-head"
+  }, /*#__PURE__*/React.createElement("h2", {
+    className: "wcard-title"
+  }, "\uC624\uB298\uC758 \uAE09\uC2DD"), lunch?.calories && /*#__PURE__*/React.createElement("span", {
+    className: "wcard-meta num"
+  }, lunch.calories)), /*#__PURE__*/React.createElement("div", {
+    className: "wcard-body"
+  }, lunch === undefined ? /*#__PURE__*/React.createElement("div", {
+    className: "wcard-empty"
+  }, "\uC2DD\uB2E8\uD45C\uB97C \uBD88\uB7EC\uC624\uB294 \uC911\uC774\uC5D0\uC694\u2026") : lunchItems.length ? /*#__PURE__*/React.createElement("ul", {
+    className: "lunch-list"
+  }, lunchItems.map((m, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, m))) : /*#__PURE__*/React.createElement("div", {
+    className: "wcard-empty"
+  }, "\uC624\uB298\uC740 \uAE09\uC2DD \uC815\uBCF4\uAC00 \uC5C6\uC5B4\uC694."))), data && /*#__PURE__*/React.createElement(React.Fragment, null, ddays.length > 0 && /*#__PURE__*/React.createElement("section", {
+    className: "wcard",
+    "aria-label": "\uB2E4\uAC00\uC624\uB294 \uB0A0"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wcard-head"
+  }, /*#__PURE__*/React.createElement("h2", {
+    className: "wcard-title"
+  }, "\uB2E4\uAC00\uC624\uB294 \uB0A0")), /*#__PURE__*/React.createElement("div", {
+    className: "wcard-body"
+  }, /*#__PURE__*/React.createElement("ul", {
+    className: "dday-rows"
+  }, ddays.map((ev, i) => /*#__PURE__*/React.createElement("li", {
+    key: i,
+    className: `dday-row ${i === 0 ? 'is-next' : ''}`
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dday-num num"
+  }, getDday(ev.date)), /*#__PURE__*/React.createElement("span", {
+    className: "dday-text"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dday-title"
+  }, ev.emoji ? `${ev.emoji} ` : '', ev.name), /*#__PURE__*/React.createElement("span", {
+    className: "dday-when"
+  }, shortDate(ev.date)))))))), data.announcements?.length > 0 && /*#__PURE__*/React.createElement("section", {
+    className: "wcard",
+    "aria-label": "\uACF5\uC9C0\uC0AC\uD56D"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wcard-head"
+  }, /*#__PURE__*/React.createElement("h2", {
+    className: "wcard-title"
+  }, "\uACF5\uC9C0\uC0AC\uD56D")), /*#__PURE__*/React.createElement("div", {
+    className: "wcard-body"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "notice-grid"
+  }, data.announcements.map(n => /*#__PURE__*/React.createElement("article", {
+    key: n.id,
+    className: `notice-card is-${n.type}`
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "notice-card-top"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: `notice-tag is-${n.type}`
+  }, typeLabel[n.type] || '일반'), /*#__PURE__*/React.createElement("span", {
+    className: "notice-date num"
+  }, (n.date || '').slice(5).replace('-', '.'))), /*#__PURE__*/React.createElement("h3", {
+    className: "notice-card-title"
+  }, n.title), n.content && /*#__PURE__*/React.createElement("p", {
+    className: "notice-card-body"
+  }, n.content)))))), th && /*#__PURE__*/React.createElement("section", {
+    className: "wcard wcard--accent",
+    "aria-label": "\uC6B0\uB9AC \uBC18 \uCE6D\uCC2C \uC628\uB3C4\uACC4"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wcard-head"
+  }, /*#__PURE__*/React.createElement("h2", {
+    className: "wcard-title"
+  }, "\uC6B0\uB9AC \uBC18 \uCE6D\uCC2C \uC628\uB3C4\uACC4")), /*#__PURE__*/React.createElement("div", {
+    className: "wcard-body thermo"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "thermo-score"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "num-xl"
+  }, th.total), /*#__PURE__*/React.createElement("span", {
+    className: "thermo-goal"
+  }, "/ ", th.goal, "\uC810")), /*#__PURE__*/React.createElement("div", {
+    className: "thermo-track",
+    role: "progressbar",
+    "aria-label": "\uCE6D\uCC2C \uC810\uC218",
+    "aria-valuemin": 0,
+    "aria-valuemax": th.goal,
+    "aria-valuenow": th.total
+  }, /*#__PURE__*/React.createElement("span", {
+    className: th.total >= th.goal ? 'is-done' : '',
+    style: {
+      width: `${pct}%`
+    }
+  })), th.reward && /*#__PURE__*/React.createElement("p", {
+    className: "thermo-note"
+  }, th.total >= th.goal ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("strong", null, "\uBAA9\uD45C \uB2EC\uC131!"), " \uC774\uC81C ", /*#__PURE__*/React.createElement("strong", null, th.reward), " \uC2DC\uAC04\uC774\uC5D0\uC694.") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("strong", null, th.goal - th.total, "\uC810\uB9CC \uB354!"), " \uBAA9\uD45C\uB97C \uCC44\uC6B0\uBA74 ", /*#__PURE__*/React.createElement("strong", null, th.reward), "\uC744(\uB97C) \uD574\uC694.")))), data.ranking?.length > 0 && /*#__PURE__*/React.createElement("section", {
+    className: "wcard",
+    "aria-label": "\uCE6D\uCC2C \uB7AD\uD0B9"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wcard-head"
+  }, /*#__PURE__*/React.createElement("h2", {
+    className: "wcard-title"
+  }, "\uCE6D\uCC2C \uB7AD\uD0B9"), /*#__PURE__*/React.createElement("span", {
+    className: "wcard-meta"
+  }, "\uC0C1\uC704 5\uBA85")), /*#__PURE__*/React.createElement("div", {
+    className: "wcard-body"
+  }, /*#__PURE__*/React.createElement("ol", {
+    className: "rank-list"
+  }, data.ranking.map((s, idx) => /*#__PURE__*/React.createElement("li", {
+    key: idx,
+    className: idx === 0 ? 'is-first' : ''
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "rank-no num"
+  }, idx + 1), /*#__PURE__*/React.createElement("span", {
+    className: "rank-name"
+  }, s.name), /*#__PURE__*/React.createElement("span", {
+    className: "rank-score num"
+  }, s.points), /*#__PURE__*/React.createElement("span", {
+    className: "rank-bar"
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: `${Math.round(s.points / topScore * 100)}%`
+    }
+  }))))))), data.links?.length > 0 && /*#__PURE__*/React.createElement("section", {
+    className: "wcard",
+    "aria-label": "\uBC14\uB85C\uAC00\uAE30"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wcard-head"
+  }, /*#__PURE__*/React.createElement("h2", {
+    className: "wcard-title"
+  }, "\uBC14\uB85C\uAC00\uAE30")), /*#__PURE__*/React.createElement("div", {
+    className: "wcard-body"
+  }, /*#__PURE__*/React.createElement("ul", {
+    className: "stu-links"
+  }, data.links.filter(l => /^https?:\/\//i.test(l.url)).map(l => /*#__PURE__*/React.createElement("li", {
+    key: l.id || l.url
+  }, /*#__PURE__*/React.createElement("a", {
+    href: l.url,
+    target: "_blank",
+    rel: "noopener noreferrer"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "stu-link-icon",
+    "aria-hidden": "true"
+  }, l.icon || '🔗'), /*#__PURE__*/React.createElement("span", {
+    className: "stu-link-text"
+  }, /*#__PURE__*/React.createElement("strong", null, l.title), l.desc && /*#__PURE__*/React.createElement("span", null, l.desc)))))))), data.updatedAt && /*#__PURE__*/React.createElement("p", {
+    className: "stu-foot"
+  }, "\uC120\uC0DD\uB2D8\uC774 ", new Date(data.updatedAt).toLocaleString('ko-KR', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  }), "\uC5D0 \uC62C\uB9B0 \uB0B4\uC6A9\uC774\uC5D0\uC694. 1\uBD84\uB9C8\uB2E4 \uC0C8\uB85C \uD655\uC778\uD574\uC694.")));
+}
 function Root() {
+  if (new URLSearchParams(location.search).has('student')) return /*#__PURE__*/React.createElement(StudentApp, null);
   return /*#__PURE__*/React.createElement(AppProvider, null, /*#__PURE__*/React.createElement(AppShell, null));
 }
 ReactDOM.createRoot(document.getElementById('root')).render(/*#__PURE__*/React.createElement(Root, null));
