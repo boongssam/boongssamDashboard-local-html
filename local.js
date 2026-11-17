@@ -203,7 +203,7 @@ function getCurrentPeriod() {
   const time = now.getHours() * 60 + now.getMinutes();
   const periods = [
     { p: 1, start: 540, end: 580 }, { p: 2, start: 590, end: 630 },
-    { p: 3, start: 650, end: 690 }, { p: 4, start: 750, end: 790 },
+    { p: 3, start: 650, end: 690 }, { p: 4, start: 700, end: 740 },
     { p: 5, start: 790, end: 830 }, { p: 6, start: 840, end: 880 },
   ];
   const found = periods.find(p => time >= p.start && time <= p.end);
@@ -308,7 +308,7 @@ function neisTodayString() {
 async function fetchTodayLunch(date = neisTodayString()) {
   try {
     const url = `${MEAL_URL}?Type=json&pIndex=1&pSize=1&ATPT_OFCDC_SC_CODE=${ATPT_OFCDC_SC_CODE}&SD_SCHUL_CODE=${SD_SCHUL_CODE}&MLSV_YMD=${date}`;
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined }); // NEIS가 막힌 망에서 무한 대기하지 않게
     if (!res.ok) throw new Error('네트워크 응답이 정상이 아닙니다.');
     const data = await res.json();
     if (!data.mealServiceDietInfo) return null;
@@ -324,7 +324,7 @@ async function fetchTodayLunch(date = neisTodayString()) {
 async function fetchSchoolHoliday(date = neisTodayString()) {
   try {
     const url = `${SCHEDULE_URL}?Type=json&pIndex=1&pSize=10&ATPT_OFCDC_SC_CODE=${ATPT_OFCDC_SC_CODE}&SD_SCHUL_CODE=${SD_SCHUL_CODE}&AA_YMD=${date}`;
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined });
     if (!res.ok) throw new Error('네트워크 응답이 정상이 아닙니다.');
     const data = await res.json();
     if (data.SchoolSchedule) {

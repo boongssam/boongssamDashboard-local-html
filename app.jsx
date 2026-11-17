@@ -83,7 +83,7 @@ function reducer(state, action) {
     case 'ADD_ASSIGNMENT': return { ...state, assignments: [...state.assignments, action.payload] };
     case 'DELETE_ASSIGNMENT': return { ...state, assignments: state.assignments.filter(a => a.id !== action.payload) };
     case 'UPDATE_ASSIGNMENT_SUBMISSIONS':
-      return { ...state, assignments: state.assignments.map(a => a.id === action.payload.id ? { ...a, submissions: { ...a.submissions, ...action.payload.submissions } } : a) };
+      return { ...state, assignments: state.assignments.map(a => String(a.id) === String(action.payload.id) ? { ...a, submissions: { ...a.submissions, ...action.payload.submissions } } : a) };
     case 'EVALUATE_ASSIGNMENT':
       return {
         ...state,
@@ -101,6 +101,7 @@ function reducer(state, action) {
     case 'ADD_POLL': return { ...state, polls: [...state.polls, action.payload] };
     case 'DELETE_POLL': return { ...state, polls: state.polls.filter(p => p.id !== action.payload) };
     case 'SET_POLLS': return { ...state, polls: action.payload };
+    case 'ADD_POLL_VOTES': return { ...state, polls: state.polls.map(p => String(p.id) === String(action.payload.pollId) ? { ...p, votes: p.options.map((_, i) => ((p.votes || [])[i] || 0) + (action.payload.counts[i] || 0)) } : p) };
     case 'VOTE_POLL': return { ...state, polls: state.polls.map(p => p.id === action.payload.pollId ? { ...p, votes: action.payload.newVotes } : p) };
     case 'ADD_TOAST': return { ...state, toasts: [...state.toasts, action.payload] };
     case 'REMOVE_TOAST': return { ...state, toasts: state.toasts.filter(t => t.id !== action.payload) };
@@ -141,7 +142,7 @@ function reducer(state, action) {
    학생 화면(QR) 공유 — 선생님 앱이 올리는 공개 스냅샷
    전화번호·알레르기·생일·출결·기록·비밀번호·API 키는 절대 넣지 않음 (아래에 적은 항목만 골라 담음)
    =================================================================== */
-const CLASS_LABEL = { school: '하남중앙초등학교', klass: '4학년 2반', teacher: '김대붕 선생님' };
+const CLASS_LABEL = window.StudentSnapshot.CLASS_LABEL;
 const STUDENT_API_PATH = '/api/student';
 
 // 배포된 주소에서 열면 같은 사이트의 API, 파일(file://)로 열면 설정에 넣은 배포 주소의 API
@@ -156,32 +157,43 @@ function studentPageUrl(settings) {
   return /^https:\/\//.test(base) ? `${base}/?student` : '';
 }
 
-function buildStudentSnapshot(state) {
-  const { students = [], weeklyPlans = {}, ddays = [], announcements = [], quickLinks = [], settings = {} } = state;
-  const ws = getWeekStart(new Date());
-  const plans = {};
-  [-7, 0, 7, 14].forEach(off => {
-    const d = new Date(ws); d.setDate(d.getDate() + off);
-    const k = toISODate(d), wk = weeklyPlans[k];
-    if (!wk) return;
-    plans[k] = {};
-    Object.entries(wk).forEach(([day, periods]) => {
-      if (!periods || typeof periods !== 'object') return;
-      plans[k][day] = {};
-      Object.entries(periods).forEach(([p, v]) => { if (v && (v.subject || v.content)) plans[k][day][p] = { subject: v.subject || '', content: v.content || '' }; });
-    });
-  });
-  const ranked = [...students].sort((a, b) => (b.points || 0) - (a.points || 0)).slice(0, 5);
-  return {
-    v: 1,
-    label: CLASS_LABEL,
-    weeklyPlans: plans,
-    ddays: ddays.map(({ name, date, emoji }) => ({ name, date, emoji: emoji || '' })),
-    announcements: announcements.map(({ id, title, content, type, date }) => ({ id, title, content: content || '', type: type || 'general', date })),
-    thermometer: { total: students.reduce((s, x) => s + (x.points || 0), 0), goal: settings.thermometerGoal || 1500, reward: settings.thermometerReward || '' },
-    ranking: ranked.map(s => ({ name: s.name, points: s.points || 0 })),
-    links: quickLinks.filter(l => /^https?:\/\//i.test(l.url || '')).map(({ id, title, url, icon, desc }) => ({ id, title, url, icon: icon || '', desc: desc || '' })),
-  };
+// 실제 고르는 규칙은 student-snapshot.js 한 곳에 있음 (교실 서버 server.js 도 같은 함수를 씀)
+const buildStudentSnapshot = (state) => window.StudentSnapshot.build(state);
+
+// 데이터 폴더의 checks/*.json (교실 서버가 남긴 학생 '활동 완료')을 읽어 apply(활동id, {학생id: 기록}) 로 넘기고 지움
+async function pullStudentChecks(folder, apply) {
+  let dir;
+  try { dir = await folder.getDirectoryHandle('checks'); } catch { return 0; }
+  const got = {}, seen = [];
+  for await (const [name, h] of dir.entries()) {
+    if (h.kind !== 'file' || !name.endsWith('.json')) continue;
+    try {
+      const c = JSON.parse(await (await h.getFile()).text());
+      if (c.activityId && c.studentId) (got[c.activityId] = got[c.activityId] || {})[c.studentId] = { timestamp: c.at || new Date().toISOString(), by: 'student' };
+    } catch { /* 깨진 파일은 그냥 지움 */ }
+    seen.push(name);
+  }
+  Object.entries(got).forEach(([id, submissions]) => apply(id, submissions));
+  for (const n of seen) await dir.removeEntry(n).catch(() => {});
+  return seen.length;
+}
+
+// 데이터 폴더의 votes/*.json (교실 서버가 남긴 학생 폰 투표)을 투표별로 세어 apply(투표id, [항목별 표 수]) 로 넘기고 지움
+async function pullStudentVotes(folder, apply) {
+  let dir;
+  try { dir = await folder.getDirectoryHandle('votes'); } catch { return 0; }
+  const counts = {}, seen = [];
+  for await (const [name, h] of dir.entries()) {
+    if (h.kind !== 'file' || !name.endsWith('.json')) continue;
+    try {
+      const v = JSON.parse(await (await h.getFile()).text());
+      if (v.pollId && Number.isInteger(v.option) && v.option >= 0) { const c = counts[v.pollId] = counts[v.pollId] || []; c[v.option] = (c[v.option] || 0) + 1; }
+    } catch { /* 깨진 파일은 그냥 지움 */ }
+    seen.push(name);
+  }
+  Object.entries(counts).forEach(([id, c]) => apply(id, c));
+  for (const n of seen) await dir.removeEntry(n).catch(() => {});
+  return seen.length;
 }
 
 function AppProvider({ children }) {
@@ -252,6 +264,8 @@ function AppProvider({ children }) {
 
   const connectFolder = async () => {
     try {
+      // 폴더를 바꾸기 전에 아직 안 쓴 저장은 지금 폴더에 먼저 씀
+      if (pendingSave.current) { clearTimeout(saveTimer.current); pendingSave.current(); await writeQueue.current; }
       const handle = await pickFolder();
       setFolder(handle);
       setFolderStatus('connected');
@@ -267,6 +281,23 @@ function AppProvider({ children }) {
     if (handle) { setFolderStatus('connected'); setIsDbLoading(true); await loadFromFolder(handle); }
     else showToast('폴더 접근이 거부되었습니다.', 'error');
   };
+
+  // 교실 서버(server.js)로 학생 폰이 보낸 '활동 완료'를 데이터 폴더의 checks/ 에서 5초마다 가져와 반영하고 지움
+  useEffect(() => {
+    if (isDbLoading || folderStatus !== 'connected' || !folder || typeof folder.getDirectoryHandle !== 'function') return;
+    let alive = true, busy = false;
+    const pull = async () => {
+      if (busy) return; busy = true;
+      try {
+        await pullStudentChecks(folder, (id, submissions) => { if (alive) dispatch({ type: 'UPDATE_ASSIGNMENT_SUBMISSIONS', payload: { id, submissions } }); });
+        await pullStudentVotes(folder, (pollId, counts) => { if (alive) dispatch({ type: 'ADD_POLL_VOTES', payload: { pollId, counts } }); });
+      } catch (e) { console.error('학생 활동 체크 가져오기 오류:', e); }
+      finally { busy = false; }
+    };
+    pull();
+    const t = setInterval(pull, 5000);
+    return () => { alive = false; clearInterval(t); };
+  }, [folder, folderStatus, isDbLoading]);
 
   // 학생 화면(QR) 공유: 학생에게 보여줄 내용만 골라 Vercel에 자동으로 올림 (내용이 바뀐 경우에만)
   const [publishStatus, setPublishStatus] = useState({ state: 'off' });
@@ -409,6 +440,7 @@ function AppProvider({ children }) {
     addAnnouncement: addAnnouncementFunc, updateAnnouncement: updateAnnouncementFunc, deleteAnnouncement: deleteAnnouncementFunc,
     addPoll: addPollFunc, deletePoll: deletePollFunc,
     login: loginFunc, logout: logoutFunc, publishStatus,
+    changeFolder: connectFolder, folderName: folder?.name,
     isDbLoading, getWeekStart, toISODate,
   };
 
@@ -438,6 +470,7 @@ function FolderGate({ status, onConnect, onReconnect }) {
             <h2>데이터 폴더 접근이 끊겼습니다</h2>
             <p>브라우저를 새로 시작하면 보안상 폴더 접근을 다시 허용해야 합니다.</p>
             <button className="btn btn-primary btn-lg" onClick={onReconnect}>폴더 다시 연결하기</button>
+            <p className="folder-gate-note">폴더를 다른 곳으로 옮겼다면 <button type="button" className="btn btn-secondary" onClick={onConnect}>다른 폴더 선택</button></p>
           </>
         ) : (
           <>
@@ -510,6 +543,16 @@ const ICON_PATHS = {
   shrink: <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />,
   sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4" /></>,
 };
+// 창 바깥(어두운 배경)을 눌렀다가 그 자리에서 뗐을 때만 닫음.
+// 입력 칸에서 글자를 끝까지 드래그해 선택하다 창 바깥에서 마우스를 놓아도 닫히지 않게 함
+let overlayPressed = null;
+function overlayClose(close) {
+  return {
+    onMouseDown: e => { overlayPressed = e.target === e.currentTarget ? e.currentTarget : null; },
+    onClick: e => { const ok = e.target === e.currentTarget && overlayPressed === e.currentTarget; overlayPressed = null; if (ok) close(); },
+  };
+}
+
 function Icon({ name, size = 20 }) {
   return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{ICON_PATHS[name]}</svg>;
 }
@@ -573,7 +616,7 @@ function AdminSettingsModal({ onClose }) {
   const [googleApiKey, setGoogleApiKey] = useState(settings.googleApiKey || '');
   const [studentPublishKey, setStudentPublishKey] = useState(settings.studentPublishKey || '');
   const [studentSiteUrl, setStudentSiteUrl] = useState(settings.studentSiteUrl || '');
-  const { publishStatus } = useApp();
+  const { publishStatus, changeFolder, folderName } = useApp();
   const isFile = location.protocol === 'file:';
   const shareUrl = studentPageUrl({ studentSiteUrl });
   const copyShare = () => { navigator.clipboard?.writeText(shareUrl).then(() => showToast('학생용 주소를 복사했어요.', 'success'), () => showToast('복사하지 못했어요. 주소를 직접 선택해 복사해 주세요.', 'error')); };
@@ -585,10 +628,15 @@ function AdminSettingsModal({ onClose }) {
   };
 
   return (
-    <div className="settings-modal-overlay" onClick={onClose}>
+    <div className="settings-modal-overlay" {...overlayClose(onClose)}>
       <div className="settings-modal-content" onClick={e => e.stopPropagation()}>
         <div className="settings-modal-header"><h3>⚙️ 관리자 설정</h3><button className="settings-close-btn" onClick={onClose}>×</button></div>
         <div className="settings-modal-body">
+          <div className="settings-form-group">
+            <label>📁 데이터 폴더</label>
+            <div className="share-link"><code>{folderName || '(연결 안 됨)'}</code><button type="button" className="chip-btn" onClick={() => { onClose(); changeFolder(); }}>다른 폴더 선택</button></div>
+            <small className="settings-help-text">db.json이 들어 있는 폴더를 고르세요. 빈 폴더를 고르면 새 db.json이 만들어지고, 원래 폴더의 데이터는 그대로 남아요.</small>
+          </div>
           <div className="settings-form-group">
             <label>📅 구글 캘린더 ID 1 (필수)</label>
             <input type="text" className="settings-form-input" placeholder="예: ...@group.calendar.google.com" value={calendarId1} onChange={e => setCalendarId1(e.target.value)} />
@@ -781,7 +829,7 @@ function Layout({ pathname, children }) {
       </nav>
 
       {showPinModal && (
-        <div className="modal-overlay" onClick={() => setShowPinModal(false)}>
+        <div className="modal-overlay" {...overlayClose(() => setShowPinModal(false))}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '350px' }}>
             <div className="modal-header">
               <h3>{settings.adminPassword ? '선생님 로그인' : '선생님 비밀번호 설정'}</h3>
@@ -985,7 +1033,7 @@ function DashboardGrid({ layout, editing, onChange, widgets }) {
 /* ===================================================================
    DashboardPage
    =================================================================== */
-const PERIOD_SLOTS = { 1: [540, 580], 2: [590, 630], 3: [650, 690], 4: [750, 790], 5: [790, 830], 6: [840, 880] };
+const PERIOD_SLOTS = { 1: [540, 580], 2: [590, 630], 3: [650, 690], 4: [700, 740], 5: [790, 830], 6: [840, 880] };
 const minToClock = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
 function DashboardPage() {
@@ -1257,7 +1305,7 @@ function DashboardPage() {
       <DashboardGrid layout={layout} editing={editingLayout} onChange={saveLayout} widgets={widgets} />
 
       {isAdmin && showNoticeForm && (
-        <div className="notice-modal-overlay" onClick={closeNoticeForm}>
+        <div className="notice-modal-overlay" {...overlayClose(closeNoticeForm)}>
           <div className="notice-modal-content" onClick={e => e.stopPropagation()}>
             <div className="notice-modal-header"><h3>{editNoticeId ? '공지사항 수정' : '새 공지사항'}</h3><button type="button" className="notice-close-btn" aria-label="닫기" onClick={closeNoticeForm}>&times;</button></div>
             <div className="notice-modal-body">
@@ -1649,7 +1697,7 @@ function StudentsPage() {
       )}
 
       {selectedStudent && (
-        <div className="modal-overlay" onClick={() => { setSelectedStudent(null); setIsEditingName(false); }}>
+        <div className="modal-overlay" {...overlayClose(() => { setSelectedStudent(null); setIsEditingName(false); })}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header"><h3 className="modal-title">학생 정보</h3><button className="modal-close" onClick={() => { setSelectedStudent(null); setIsEditingName(false); }}>&times;</button></div>
             <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
@@ -1719,7 +1767,7 @@ function StudentsPage() {
       )}
 
       {showBulkModal && (
-        <div className="modal-overlay" onClick={() => setShowBulkModal(false)}>
+        <div className="modal-overlay" {...overlayClose(() => setShowBulkModal(false))}>
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '450px' }}>
             <div className="modal-header"><h3 className="modal-title">명단 한 번에 고치기</h3><button className="modal-close" onClick={() => setShowBulkModal(false)}>&times;</button></div>
             <div className="modal-body">
@@ -1927,7 +1975,7 @@ function AttendancePage() {
           )}
 
           {noteStudent && (
-            <div className="modal-overlay" onClick={() => setNoteFor(null)}>
+            <div className="modal-overlay" {...overlayClose(() => setNoteFor(null))}>
               <div className="modal-content att-note-modal" role="dialog" aria-modal="true" aria-labelledby="att-note-title" onClick={e => e.stopPropagation()}>
                 <div className="modal-header"><h3 id="att-note-title">{noteStudent.name} · {STATUS_MAP[current(noteFor).status].label} 사유</h3><button type="button" className="close-btn" aria-label="닫기" onClick={() => setNoteFor(null)}>×</button></div>
                 <div className="modal-body">
@@ -2636,10 +2684,23 @@ function StudentApp() {
   const [lunch, setLunch] = useState(undefined);
   const [now, setNow] = useState(() => new Date());
   const hasData = useRef(false);
+  const reload = useRef(() => {});
+  const [stuTab, setStuTab] = useState(() => (location.hash || '').slice(1) || 'today');
+  useEffect(() => {
+    const onHash = () => setStuTab((location.hash || '').slice(1) || 'today');
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+  // 활동 완료 체크 (교실 서버에서만): 고른 학생, 보낸 체크, 안내 문구
+  const [pick, setPick] = useState(null); // { actId, sid }
+  const [openPast, setOpenPast] = useState(null);
+  const [sentDone, setSentDone] = useState({});
+  const [sending, setSending] = useState(false);
+  const [actMsg, setActMsg] = useState({});
 
   useEffect(() => {
     let alive = true;
-    const load = async () => {
+    const load = reload.current = async () => {
       try {
         const res = await fetch(STUDENT_API_PATH, { cache: 'no-store' });
         if (res.status === 404) { if (alive && !hasData.current) setProblem('아직 선생님이 학생 화면을 올리지 않았어요.'); return; }
@@ -2652,7 +2713,7 @@ function StudentApp() {
     };
     load();
     fetchTodayLunch().then(l => { if (alive) setLunch(l); });
-    const t = setInterval(() => { load(); setNow(new Date()); }, 60000);
+    const t = setInterval(() => { load(); setNow(new Date()); }, 30000);
     return () => { alive = false; clearInterval(t); };
   }, []);
 
@@ -2678,8 +2739,122 @@ function StudentApp() {
   const typeLabel = { important: '중요', newsletter: '통신문', general: '일반' };
   const shortDate = (iso) => { const d = new Date(iso); return `${d.getMonth() + 1}월 ${d.getDate()}일 ${getDayName(d)}요일`; };
 
+  // 투표/설문: 고른 항목, 이 폰에서 낸 표(새로고침해도 기억), 안내 문구
+  const readVoted = () => { try { return JSON.parse(localStorage.getItem('stuVoted') || '{}'); } catch { return {}; } };
+  const [pollPick, setPollPick] = useState({});
+  const [voted, setVoted] = useState(readVoted);
+  const [pollMsg, setPollMsg] = useState({});
+  const [voting, setVoting] = useState(null);
+  const sendVote = async (p) => {
+    const option = pollPick[p.id];
+    if (!Number.isInteger(option)) return;
+    setVoting(p.id); setPollMsg(m => ({ ...m, [p.id]: '' }));
+    try {
+      const res = await fetch('/api/student/vote', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pollId: p.id, option }) });
+      const err = res.ok ? null : (await res.json().catch(() => ({}))).error;
+      if (res.ok || err === 'already_voted') {
+        const next = { ...readVoted(), [p.id]: res.ok ? option : true };
+        try { localStorage.setItem('stuVoted', JSON.stringify(next)); } catch {}
+        setVoted(next);
+        setPollMsg(m => ({ ...m, [p.id]: res.ok ? '투표했어요! 친구들 표도 30초마다 새로 반영돼요.' : '이 폰으로는 이미 투표했어요.' }));
+        reload.current();
+      } else if (err === 'poll_closed') {
+        setPollMsg(m => ({ ...m, [p.id]: '이 투표는 끝났어요.' })); reload.current();
+      } else throw new Error(err || String(res.status));
+    } catch {
+      setPollMsg(m => ({ ...m, [p.id]: '투표를 보내지 못했어요. 잠시 뒤 다시 눌러 주세요.' }));
+    } finally { setVoting(null); }
+  };
+
+  const act = data?.canCheck ? data.activity : null;
+  const pastActs = data?.canCheck ? (data.activities || []).slice(1) : [];
+  const roster = data?.roster || [];
+  const doneOf = (a) => new Set([...(a?.done || []), ...(a ? Object.keys(sentDone[a.id] || {}) : [])]);
+  const setMsgFor = (id, m) => setActMsg(prev => ({ ...prev, [id]: m }));
+  const sendDone = async (a) => {
+    const picked = pick && pick.actId === a.id ? roster.find(s => s.id === pick.sid) : null;
+    if (!picked) return;
+    setSending(true); setMsgFor(a.id, '');
+    try {
+      const res = await fetch('/api/student/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ activityId: a.id, studentId: picked.id }) });
+      if (res.status === 409) { setMsgFor(a.id, '선생님이 이 활동을 지웠어요.'); setPick(null); reload.current(); return; }
+      if (!res.ok) throw new Error(String(res.status));
+      setSentDone(prev => ({ ...prev, [a.id]: { ...(prev[a.id] || {}), [picked.id]: true } }));
+      setMsgFor(a.id, `${picked.name} 학생, 완료를 선생님께 보냈어요.`);
+      setPick(null);
+    } catch {
+      setMsgFor(a.id, '보내지 못했어요. 잠시 뒤 다시 눌러 주세요.');
+    } finally { setSending(false); }
+  };
+  // 활동 하나의 완료 체크 화면 (오늘의 활동, 펼친 지난 활동이 함께 씀)
+  const renderActBody = (a) => {
+    const done = doneOf(a);
+    const pct = roster.length ? Math.round((done.size / roster.length) * 100) : 0;
+    const picked = pick && pick.actId === a.id ? roster.find(s => s.id === pick.sid) : null;
+    return (
+      <>
+        <div className="lrn-track" role="progressbar" aria-label="완료율" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${pct}%` }} className={pct === 100 ? 'is-done' : ''} /></div>
+        <p className="lrn-hint">활동을 끝냈으면 <strong>내 이름</strong>을 눌러 알려 주세요. 잘못 눌렀다면 선생님께 말해 주세요.</p>
+        {picked && (
+          <div className="stu-confirm" role="alertdialog" aria-labelledby={`stu-confirm-${a.id}`}>
+            <p id={`stu-confirm-${a.id}`}><strong className="num">{picked.number}</strong>번 <strong>{picked.name}</strong>, 활동을 끝냈나요?</p>
+            <div className="stu-confirm-actions">
+              <button type="button" className="btn btn-secondary" onClick={() => setPick(null)} disabled={sending}>아니에요</button>
+              <button type="button" className="btn btn-primary" onClick={() => sendDone(a)} disabled={sending}>{sending ? '보내는 중…' : '네, 끝냈어요'}</button>
+            </div>
+          </div>
+        )}
+        {actMsg[a.id] && <p className="stu-act-msg" role="status">{actMsg[a.id]}</p>}
+        <ul className="lrn-grid stu-act-grid">
+          {roster.map(s => {
+            const isDone = done.has(s.id);
+            const isPicked = pick && pick.actId === a.id && pick.sid === s.id;
+            return (
+              <li key={s.id}>
+                <button type="button" aria-pressed={isDone} disabled={isDone} className={`lrn-student ${isDone ? 'is-done' : ''} ${isPicked ? 'is-picked' : ''}`} onClick={() => { setMsgFor(a.id, ''); setPick({ actId: a.id, sid: s.id }); }}>
+                  <span className="att-box" />
+                  <span className="att-no num">{s.number}</span>
+                  <span className="lrn-name">{s.name}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </>
+    );
+  };
+  const doneSet = doneOf(act);
+
+  const ddayCard = ddays.length > 0 ? (
+        <section className="wcard" aria-label="다가오는 날">
+          <div className="wcard-head"><h2 className="wcard-title">다가오는 날</h2></div>
+          <div className="wcard-body">
+            <ul className="dday-rows">
+              {ddays.map((ev, i) => (
+                <li key={i} className={`dday-row ${i === 0 ? 'is-next' : ''}`}>
+                  <span className="dday-num num">{getDday(ev.date)}</span>
+                  <span className="dday-text"><span className="dday-title">{ev.emoji ? `${ev.emoji} ` : ''}{ev.name}</span><span className="dday-when">{shortDate(ev.date)}{ev.auto && <span className="dday-auto">{ev.auto}</span>}</span></span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+  ) : null;
+
+  // 탭: 주소 끝 #today / #act / #notice / #class / #links 로도 바로 열 수 있음
+  const STU_TABS = [
+    { key: 'today', label: '오늘', icon: 'calendar' },
+    { key: 'act', label: '활동', icon: 'learning', badge: (act && act.done.length < roster.length ? 1 : 0) + (data?.polls || []).filter(p => !p.myVote && voted[p.id] === undefined).length },
+    { key: 'notice', label: '공지', icon: 'weekly' },
+    { key: 'class', label: '우리 반', icon: 'students' },
+    { key: 'links', label: '바로가기', icon: 'links' },
+  ];
+  const tab = STU_TABS.some(t => t.key === stuTab) ? stuTab : 'today';
+  const goTab = (k) => { setStuTab(k); try { history.replaceState(null, '', '#' + k); } catch {} window.scrollTo(0, 0); };
+  const hasAct = !!act || (data?.polls?.length || 0) > 0;
+
   return (
-    <div className="stu">
+    <div className="stu has-tabs">
       <header className="stu-top">
         <span className="logo-mark">4·2</span>
         <div className="stu-who"><strong>{label.school}</strong><span>{label.klass} · {label.teacher}</span></div>
@@ -2691,7 +2866,100 @@ function StudentApp() {
 
       {problem && !data && <div className="stu-msg">{problem}</div>}
 
-      {data && (<>
+      <nav className="stu-tabs" aria-label="학생 화면 메뉴">
+        {STU_TABS.map(t => (
+          <button key={t.key} type="button" className={'stu-tab' + (tab === t.key ? ' is-on' : '')} aria-current={tab === t.key ? 'page' : undefined} onClick={() => goTab(t.key)}>
+            <Icon name={t.icon} size={22} />
+            <span>{t.label}</span>
+            {t.badge > 0 && <span className="stu-tab-dot" aria-label="새 활동이나 투표가 있어요" />}
+          </button>
+        ))}
+      </nav>
+
+      {tab === 'act' && act && (
+        <section className="wcard stu-act" aria-label="오늘의 활동">
+          <div className="wcard-head">
+            <h2 className="wcard-title">오늘의 활동</h2>
+            <span className="wcard-meta"><strong className="num lrn-done">{doneSet.size}</strong> / <span className="num">{roster.length}</span>명 완료</span>
+          </div>
+          <div className="wcard-body">
+            <div className="stu-act-title"><span className={`lrn-type ${act.type === '수행평가' ? 'is-eval' : ''}`}>{act.type}</span><strong>{act.title}</strong></div>
+            {renderActBody(act)}
+          </div>
+        </section>
+      )}
+
+      {tab === 'act' && pastActs.length > 0 && (
+        <section className="wcard stu-past" aria-label="지난 활동">
+          <div className="wcard-head"><h2 className="wcard-title">지난 활동</h2><span className="wcard-meta"><span className="num">{pastActs.length}</span>개</span></div>
+          <div className="wcard-body">
+            <ul className="stu-past-list">
+              {pastActs.map(a => {
+                const done = doneOf(a);
+                const pct = roster.length ? Math.round((done.size / roster.length) * 100) : 0;
+                const isOpen = openPast === a.id;
+                return (
+                  <li key={a.id} className={`stu-past-item ${isOpen ? 'is-open' : ''}`}>
+                    <button type="button" className="stu-past-row" aria-expanded={isOpen} onClick={() => { setPick(null); setOpenPast(isOpen ? null : a.id); }}>
+                      <span className={`lrn-type ${a.type === '수행평가' ? 'is-eval' : ''}`}>{a.type}</span>
+                      <span className="stu-past-text"><strong>{a.title}</strong><span className="num">{a.date ? a.date.slice(5).replace('-', '/') : ''} · {done.size}/{roster.length}명 완료</span></span>
+                      <span className="stu-past-bar"><span style={{ width: `${pct}%` }} className={pct === 100 ? 'is-done' : ''} /></span>
+                      <span className="stu-past-chev" aria-hidden="true"><Icon name="chevron" size={16} /></span>
+                    </button>
+                    {isOpen && <div className="stu-past-body">{renderActBody(a)}</div>}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        </section>
+      )}
+
+      {tab === 'act' && data?.polls?.length > 0 && data.polls.map(p => {
+        const total = p.votes.reduce((a, b) => a + b, 0);
+        const done = p.myVote || voted[p.id] !== undefined;
+        const canVote = data.canCheck && !done;
+        const mine = Number.isInteger(voted[p.id]) ? voted[p.id] : null;
+        return (
+          <section key={p.id} className="wcard stu-poll" aria-label={`투표: ${p.question}`}>
+            <div className="wcard-head"><h2 className="wcard-title">투표</h2><span className="wcard-meta">총 <strong className="num">{total}</strong>표</span></div>
+            <div className="wcard-body">
+              <p className="stu-poll-q">{p.question}</p>
+              {canVote ? (
+                <>
+                  <div className="stu-poll-opts" role="radiogroup" aria-label={p.question}>
+                    {p.options.map((o, i) => (
+                      <button key={i} type="button" role="radio" aria-checked={pollPick[p.id] === i} className={`stu-poll-opt ${pollPick[p.id] === i ? 'is-picked' : ''}`} onClick={() => setPollPick(m => ({ ...m, [p.id]: i }))}>
+                        <span className="stu-poll-dot" aria-hidden="true" />{o}
+                      </button>
+                    ))}
+                  </div>
+                  <button type="button" className="btn btn-primary stu-poll-send" disabled={!Number.isInteger(pollPick[p.id]) || voting === p.id} onClick={() => sendVote(p)}>{voting === p.id ? '보내는 중…' : '투표하기'}</button>
+                </>
+              ) : (
+                <ul className="stu-poll-results">
+                  {p.options.map((o, i) => {
+                    const pct = total ? Math.round((p.votes[i] / total) * 100) : 0;
+                    return (
+                      <li key={i} className={mine === i ? 'is-mine' : ''}>
+                        <span className="stu-poll-label">{o}{mine === i && <em> · 내 선택</em>}</span>
+                        <span className="stu-poll-num num">{p.votes[i]}표</span>
+                        <span className="stu-poll-bar"><span style={{ width: `${pct}%` }} /></span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              {!data.canCheck && !done && <p className="lrn-hint">투표는 교실 Wi-Fi에서 할 수 있어요.</p>}
+              {pollMsg[p.id] && <p className="stu-act-msg" role="status">{pollMsg[p.id]}</p>}
+            </div>
+          </section>
+        );
+      })}
+
+      {tab === 'act' && data && !hasAct && <div className="stu-msg">지금은 할 활동이나 투표가 없어요.</div>}
+
+      {tab === 'today' && data && (<>
         <section className="wcard" aria-label="오늘의 시간표">
           <div className="wcard-head"><h2 className="wcard-title">오늘의 시간표</h2></div>
           <div className="wcard-body">
@@ -2709,33 +2977,20 @@ function StudentApp() {
         </section>
       </>)}
 
-      <section className="wcard" aria-label="오늘의 급식">
+      {tab === 'today' && <section className="wcard" aria-label="오늘의 급식">
         <div className="wcard-head"><h2 className="wcard-title">오늘의 급식</h2>{lunch?.calories && <span className="wcard-meta num">{lunch.calories}</span>}</div>
         <div className="wcard-body">
           {lunch === undefined ? <div className="wcard-empty">식단표를 불러오는 중이에요…</div>
             : lunchItems.length ? <ul className="lunch-list">{lunchItems.map((m, i) => <li key={i}>{m}</li>)}</ul>
             : <div className="wcard-empty">오늘은 급식 정보가 없어요.</div>}
         </div>
-      </section>
+      </section>}
 
       {data && (<>
-        {ddays.length > 0 && (
-          <section className="wcard" aria-label="다가오는 날">
-            <div className="wcard-head"><h2 className="wcard-title">다가오는 날</h2></div>
-            <div className="wcard-body">
-              <ul className="dday-rows">
-                {ddays.map((ev, i) => (
-                  <li key={i} className={`dday-row ${i === 0 ? 'is-next' : ''}`}>
-                    <span className="dday-num num">{getDday(ev.date)}</span>
-                    <span className="dday-text"><span className="dday-title">{ev.emoji ? `${ev.emoji} ` : ''}{ev.name}</span><span className="dday-when">{shortDate(ev.date)}</span></span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </section>
-        )}
+        {tab === 'today' && ddayCard}
 
-        {data.announcements?.length > 0 && (
+        {tab === 'notice' && !data.announcements?.length && !ddays.length && <div className="stu-msg">지금은 공지가 없어요.</div>}
+        {tab === 'notice' && data.announcements?.length > 0 && (
           <section className="wcard" aria-label="공지사항">
             <div className="wcard-head"><h2 className="wcard-title">공지사항</h2></div>
             <div className="wcard-body">
@@ -2751,8 +3006,9 @@ function StudentApp() {
             </div>
           </section>
         )}
+        {tab === 'notice' && ddayCard}
 
-        {th && (
+        {tab === 'class' && th && (
           <section className="wcard wcard--accent" aria-label="우리 반 칭찬 온도계">
             <div className="wcard-head"><h2 className="wcard-title">우리 반 칭찬 온도계</h2></div>
             <div className="wcard-body thermo">
@@ -2763,7 +3019,7 @@ function StudentApp() {
           </section>
         )}
 
-        {data.ranking?.length > 0 && (
+        {tab === 'class' && data.ranking?.length > 0 && (
           <section className="wcard" aria-label="칭찬 랭킹">
             <div className="wcard-head"><h2 className="wcard-title">칭찬 랭킹</h2><span className="wcard-meta">상위 5명</span></div>
             <div className="wcard-body">
@@ -2779,7 +3035,8 @@ function StudentApp() {
           </section>
         )}
 
-        {data.links?.length > 0 && (
+        {tab === 'links' && !data.links?.length && <div className="stu-msg">선생님이 아직 바로가기를 넣지 않았어요.</div>}
+        {tab === 'links' && data.links?.length > 0 && (
           <section className="wcard" aria-label="바로가기">
             <div className="wcard-head"><h2 className="wcard-title">바로가기</h2></div>
             <div className="wcard-body">
@@ -2792,7 +3049,7 @@ function StudentApp() {
           </section>
         )}
 
-        {data.updatedAt && <p className="stu-foot">선생님이 {new Date(data.updatedAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}에 올린 내용이에요. 1분마다 새로 확인해요.</p>}
+        {data.updatedAt && <p className="stu-foot">선생님이 {new Date(data.updatedAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}에 올린 내용이에요. 30초마다 새로 확인해요.</p>}
       </>)}
     </div>
   );

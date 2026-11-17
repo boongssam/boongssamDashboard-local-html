@@ -217,7 +217,7 @@ function reducer(state, action) {
     case 'UPDATE_ASSIGNMENT_SUBMISSIONS':
       return {
         ...state,
-        assignments: state.assignments.map(a => a.id === action.payload.id ? {
+        assignments: state.assignments.map(a => String(a.id) === String(action.payload.id) ? {
           ...a,
           submissions: {
             ...a.submissions,
@@ -274,6 +274,14 @@ function reducer(state, action) {
       return {
         ...state,
         polls: action.payload
+      };
+    case 'ADD_POLL_VOTES':
+      return {
+        ...state,
+        polls: state.polls.map(p => String(p.id) === String(action.payload.pollId) ? {
+          ...p,
+          votes: p.options.map((_, i) => ((p.votes || [])[i] || 0) + (action.payload.counts[i] || 0))
+        } : p)
       };
     case 'VOTE_POLL':
       return {
@@ -439,11 +447,7 @@ function reducer(state, action) {
    학생 화면(QR) 공유 — 선생님 앱이 올리는 공개 스냅샷
    전화번호·알레르기·생일·출결·기록·비밀번호·API 키는 절대 넣지 않음 (아래에 적은 항목만 골라 담음)
    =================================================================== */
-const CLASS_LABEL = {
-  school: '하남중앙초등학교',
-  klass: '4학년 2반',
-  teacher: '김대붕 선생님'
-};
+const CLASS_LABEL = window.StudentSnapshot.CLASS_LABEL;
 const STUDENT_API_PATH = '/api/student';
 
 // 배포된 주소에서 열면 같은 사이트의 API, 파일(file://)로 열면 설정에 넣은 배포 주소의 API
@@ -457,85 +461,60 @@ function studentPageUrl(settings) {
   const base = (settings?.studentSiteUrl || '').trim().replace(/\/+$/, '');
   return /^https:\/\//.test(base) ? `${base}/?student` : '';
 }
-function buildStudentSnapshot(state) {
-  const {
-    students = [],
-    weeklyPlans = {},
-    ddays = [],
-    announcements = [],
-    quickLinks = [],
-    settings = {}
-  } = state;
-  const ws = getWeekStart(new Date());
-  const plans = {};
-  [-7, 0, 7, 14].forEach(off => {
-    const d = new Date(ws);
-    d.setDate(d.getDate() + off);
-    const k = toISODate(d),
-      wk = weeklyPlans[k];
-    if (!wk) return;
-    plans[k] = {};
-    Object.entries(wk).forEach(([day, periods]) => {
-      if (!periods || typeof periods !== 'object') return;
-      plans[k][day] = {};
-      Object.entries(periods).forEach(([p, v]) => {
-        if (v && (v.subject || v.content)) plans[k][day][p] = {
-          subject: v.subject || '',
-          content: v.content || ''
-        };
-      });
-    });
-  });
-  const ranked = [...students].sort((a, b) => (b.points || 0) - (a.points || 0)).slice(0, 5);
-  return {
-    v: 1,
-    label: CLASS_LABEL,
-    weeklyPlans: plans,
-    ddays: ddays.map(({
-      name,
-      date,
-      emoji
-    }) => ({
-      name,
-      date,
-      emoji: emoji || ''
-    })),
-    announcements: announcements.map(({
-      id,
-      title,
-      content,
-      type,
-      date
-    }) => ({
-      id,
-      title,
-      content: content || '',
-      type: type || 'general',
-      date
-    })),
-    thermometer: {
-      total: students.reduce((s, x) => s + (x.points || 0), 0),
-      goal: settings.thermometerGoal || 1500,
-      reward: settings.thermometerReward || ''
-    },
-    ranking: ranked.map(s => ({
-      name: s.name,
-      points: s.points || 0
-    })),
-    links: quickLinks.filter(l => /^https?:\/\//i.test(l.url || '')).map(({
-      id,
-      title,
-      url,
-      icon,
-      desc
-    }) => ({
-      id,
-      title,
-      url,
-      icon: icon || '',
-      desc: desc || ''
-    }))
-  };
+
+// 실제 고르는 규칙은 student-snapshot.js 한 곳에 있음 (교실 서버 server.js 도 같은 함수를 씀)
+const buildStudentSnapshot = state => window.StudentSnapshot.build(state);
+
+// 데이터 폴더의 checks/*.json (교실 서버가 남긴 학생 '활동 완료')을 읽어 apply(활동id, {학생id: 기록}) 로 넘기고 지움
+async function pullStudentChecks(folder, apply) {
+  let dir;
+  try {
+    dir = await folder.getDirectoryHandle('checks');
+  } catch {
+    return 0;
+  }
+  const got = {},
+    seen = [];
+  for await (const [name, h] of dir.entries()) {
+    if (h.kind !== 'file' || !name.endsWith('.json')) continue;
+    try {
+      const c = JSON.parse(await (await h.getFile()).text());
+      if (c.activityId && c.studentId) (got[c.activityId] = got[c.activityId] || {})[c.studentId] = {
+        timestamp: c.at || new Date().toISOString(),
+        by: 'student'
+      };
+    } catch {/* 깨진 파일은 그냥 지움 */}
+    seen.push(name);
+  }
+  Object.entries(got).forEach(([id, submissions]) => apply(id, submissions));
+  for (const n of seen) await dir.removeEntry(n).catch(() => {});
+  return seen.length;
+}
+
+// 데이터 폴더의 votes/*.json (교실 서버가 남긴 학생 폰 투표)을 투표별로 세어 apply(투표id, [항목별 표 수]) 로 넘기고 지움
+async function pullStudentVotes(folder, apply) {
+  let dir;
+  try {
+    dir = await folder.getDirectoryHandle('votes');
+  } catch {
+    return 0;
+  }
+  const counts = {},
+    seen = [];
+  for await (const [name, h] of dir.entries()) {
+    if (h.kind !== 'file' || !name.endsWith('.json')) continue;
+    try {
+      const v = JSON.parse(await (await h.getFile()).text());
+      if (v.pollId && Number.isInteger(v.option) && v.option >= 0) {
+        const c = counts[v.pollId] = counts[v.pollId] || [];
+        c[v.option] = (c[v.option] || 0) + 1;
+      }
+    } catch {/* 깨진 파일은 그냥 지움 */}
+    seen.push(name);
+  }
+  Object.entries(counts).forEach(([id, c]) => apply(id, c));
+  for (const n of seen) await dir.removeEntry(n).catch(() => {});
+  return seen.length;
 }
 function AppProvider({
   children
@@ -675,6 +654,12 @@ function AppProvider({
   }, [loadFromFolder]);
   const connectFolder = async () => {
     try {
+      // 폴더를 바꾸기 전에 아직 안 쓴 저장은 지금 폴더에 먼저 씀
+      if (pendingSave.current) {
+        clearTimeout(saveTimer.current);
+        pendingSave.current();
+        await writeQueue.current;
+      }
       const handle = await pickFolder();
       setFolder(handle);
       setFolderStatus('connected');
@@ -692,6 +677,47 @@ function AppProvider({
       await loadFromFolder(handle);
     } else showToast('폴더 접근이 거부되었습니다.', 'error');
   };
+
+  // 교실 서버(server.js)로 학생 폰이 보낸 '활동 완료'를 데이터 폴더의 checks/ 에서 5초마다 가져와 반영하고 지움
+  useEffect(() => {
+    if (isDbLoading || folderStatus !== 'connected' || !folder || typeof folder.getDirectoryHandle !== 'function') return;
+    let alive = true,
+      busy = false;
+    const pull = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        await pullStudentChecks(folder, (id, submissions) => {
+          if (alive) dispatch({
+            type: 'UPDATE_ASSIGNMENT_SUBMISSIONS',
+            payload: {
+              id,
+              submissions
+            }
+          });
+        });
+        await pullStudentVotes(folder, (pollId, counts) => {
+          if (alive) dispatch({
+            type: 'ADD_POLL_VOTES',
+            payload: {
+              pollId,
+              counts
+            }
+          });
+        });
+      } catch (e) {
+        console.error('학생 활동 체크 가져오기 오류:', e);
+      } finally {
+        busy = false;
+      }
+    };
+    pull();
+    const t = setInterval(pull, 5000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [folder, folderStatus, isDbLoading]);
 
   // 학생 화면(QR) 공유: 학생에게 보여줄 내용만 골라 Vercel에 자동으로 올림 (내용이 바뀐 경우에만)
   const [publishStatus, setPublishStatus] = useState({
@@ -1020,6 +1046,8 @@ function AppProvider({
     login: loginFunc,
     logout: logoutFunc,
     publishStatus,
+    changeFolder: connectFolder,
+    folderName: folder?.name,
     isDbLoading,
     getWeekStart,
     toISODate
@@ -1059,7 +1087,13 @@ function FolderGate({
   }, "\uD83D\uDCC1"), status === 'needs-reconnect' ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("h2", null, "\uB370\uC774\uD130 \uD3F4\uB354 \uC811\uADFC\uC774 \uB04A\uACBC\uC2B5\uB2C8\uB2E4"), /*#__PURE__*/React.createElement("p", null, "\uBE0C\uB77C\uC6B0\uC800\uB97C \uC0C8\uB85C \uC2DC\uC791\uD558\uBA74 \uBCF4\uC548\uC0C1 \uD3F4\uB354 \uC811\uADFC\uC744 \uB2E4\uC2DC \uD5C8\uC6A9\uD574\uC57C \uD569\uB2C8\uB2E4."), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-primary btn-lg",
     onClick: onReconnect
-  }, "\uD3F4\uB354 \uB2E4\uC2DC \uC5F0\uACB0\uD558\uAE30")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("h2", null, "\uD559\uAE09 \uB370\uC774\uD130\uB97C \uC800\uC7A5\uD560 \uD3F4\uB354\uB97C \uC120\uD0DD\uD574\uC8FC\uC138\uC694"), /*#__PURE__*/React.createElement("p", null, "\uC120\uD0DD\uD55C \uD3F4\uB354 \uC548\uC5D0 db.json \uD30C\uC77C\uB85C \uBAA8\uB4E0 \uB370\uC774\uD130\uAC00 \uC800\uC7A5\uB429\uB2C8\uB2E4. \uD55C \uBC88\uB9CC \uC120\uD0DD\uD558\uBA74 \uB429\uB2C8\uB2E4."), /*#__PURE__*/React.createElement("button", {
+  }, "\uD3F4\uB354 \uB2E4\uC2DC \uC5F0\uACB0\uD558\uAE30"), /*#__PURE__*/React.createElement("p", {
+    className: "folder-gate-note"
+  }, "\uD3F4\uB354\uB97C \uB2E4\uB978 \uACF3\uC73C\uB85C \uC62E\uACBC\uB2E4\uBA74 ", /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn btn-secondary",
+    onClick: onConnect
+  }, "\uB2E4\uB978 \uD3F4\uB354 \uC120\uD0DD"))) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("h2", null, "\uD559\uAE09 \uB370\uC774\uD130\uB97C \uC800\uC7A5\uD560 \uD3F4\uB354\uB97C \uC120\uD0DD\uD574\uC8FC\uC138\uC694"), /*#__PURE__*/React.createElement("p", null, "\uC120\uD0DD\uD55C \uD3F4\uB354 \uC548\uC5D0 db.json \uD30C\uC77C\uB85C \uBAA8\uB4E0 \uB370\uC774\uD130\uAC00 \uC800\uC7A5\uB429\uB2C8\uB2E4. \uD55C \uBC88\uB9CC \uC120\uD0DD\uD558\uBA74 \uB429\uB2C8\uB2E4."), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-primary btn-lg",
     onClick: onConnect
   }, "\uD3F4\uB354 \uC120\uD0DD\uD558\uAE30"), /*#__PURE__*/React.createElement("p", {
@@ -1239,6 +1273,21 @@ const ICON_PATHS = {
     d: "M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"
   }))
 };
+// 창 바깥(어두운 배경)을 눌렀다가 그 자리에서 뗐을 때만 닫음.
+// 입력 칸에서 글자를 끝까지 드래그해 선택하다 창 바깥에서 마우스를 놓아도 닫히지 않게 함
+let overlayPressed = null;
+function overlayClose(close) {
+  return {
+    onMouseDown: e => {
+      overlayPressed = e.target === e.currentTarget ? e.currentTarget : null;
+    },
+    onClick: e => {
+      const ok = e.target === e.currentTarget && overlayPressed === e.currentTarget;
+      overlayPressed = null;
+      if (ok) close();
+    }
+  };
+}
 function Icon({
   name,
   size = 20
@@ -1366,7 +1415,9 @@ function AdminSettingsModal({
   const [studentPublishKey, setStudentPublishKey] = useState(settings.studentPublishKey || '');
   const [studentSiteUrl, setStudentSiteUrl] = useState(settings.studentSiteUrl || '');
   const {
-    publishStatus
+    publishStatus,
+    changeFolder,
+    folderName
   } = useApp();
   const isFile = location.protocol === 'file:';
   const shareUrl = studentPageUrl({
@@ -1389,10 +1440,9 @@ function AdminSettingsModal({
     showToast('설정이 저장되었습니다.', 'success');
     onClose();
   };
-  return /*#__PURE__*/React.createElement("div", {
-    className: "settings-modal-overlay",
-    onClick: onClose
-  }, /*#__PURE__*/React.createElement("div", {
+  return /*#__PURE__*/React.createElement("div", _extends({
+    className: "settings-modal-overlay"
+  }, overlayClose(onClose)), /*#__PURE__*/React.createElement("div", {
     className: "settings-modal-content",
     onClick: e => e.stopPropagation()
   }, /*#__PURE__*/React.createElement("div", {
@@ -1403,6 +1453,19 @@ function AdminSettingsModal({
   }, "\xD7")), /*#__PURE__*/React.createElement("div", {
     className: "settings-modal-body"
   }, /*#__PURE__*/React.createElement("div", {
+    className: "settings-form-group"
+  }, /*#__PURE__*/React.createElement("label", null, "\uD83D\uDCC1 \uB370\uC774\uD130 \uD3F4\uB354"), /*#__PURE__*/React.createElement("div", {
+    className: "share-link"
+  }, /*#__PURE__*/React.createElement("code", null, folderName || '(연결 안 됨)'), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "chip-btn",
+    onClick: () => {
+      onClose();
+      changeFolder();
+    }
+  }, "\uB2E4\uB978 \uD3F4\uB354 \uC120\uD0DD")), /*#__PURE__*/React.createElement("small", {
+    className: "settings-help-text"
+  }, "db.json\uC774 \uB4E4\uC5B4 \uC788\uB294 \uD3F4\uB354\uB97C \uACE0\uB974\uC138\uC694. \uBE48 \uD3F4\uB354\uB97C \uACE0\uB974\uBA74 \uC0C8 db.json\uC774 \uB9CC\uB4E4\uC5B4\uC9C0\uACE0, \uC6D0\uB798 \uD3F4\uB354\uC758 \uB370\uC774\uD130\uB294 \uADF8\uB300\uB85C \uB0A8\uC544\uC694.")), /*#__PURE__*/React.createElement("div", {
     className: "settings-form-group"
   }, /*#__PURE__*/React.createElement("label", null, "\uD83D\uDCC5 \uAD6C\uAE00 \uCE98\uB9B0\uB354 ID 1 (\uD544\uC218)"), /*#__PURE__*/React.createElement("input", {
     type: "text",
@@ -1821,10 +1884,9 @@ function Layout({
       "data-tone": item.tone,
       className: `mobile-nav-item ${isActive ? 'active' : ''} ${!isAllowed ? 'nav-disabled' : ''}`
     }, item.icon, /*#__PURE__*/React.createElement("span", null, MOBILE_LABELS[item.path]));
-  })), showPinModal && /*#__PURE__*/React.createElement("div", {
-    className: "modal-overlay",
-    onClick: () => setShowPinModal(false)
-  }, /*#__PURE__*/React.createElement("div", {
+  })), showPinModal && /*#__PURE__*/React.createElement("div", _extends({
+    className: "modal-overlay"
+  }, overlayClose(() => setShowPinModal(false))), /*#__PURE__*/React.createElement("div", {
     className: "modal-content",
     onClick: e => e.stopPropagation(),
     style: {
@@ -2210,7 +2272,7 @@ const PERIOD_SLOTS = {
   1: [540, 580],
   2: [590, 630],
   3: [650, 690],
-  4: [750, 790],
+  4: [700, 740],
   5: [790, 830],
   6: [840, 880]
 };
@@ -2744,10 +2806,9 @@ function DashboardPage() {
     editing: editingLayout,
     onChange: saveLayout,
     widgets: widgets
-  }), isAdmin && showNoticeForm && /*#__PURE__*/React.createElement("div", {
-    className: "notice-modal-overlay",
-    onClick: closeNoticeForm
-  }, /*#__PURE__*/React.createElement("div", {
+  }), isAdmin && showNoticeForm && /*#__PURE__*/React.createElement("div", _extends({
+    className: "notice-modal-overlay"
+  }, overlayClose(closeNoticeForm)), /*#__PURE__*/React.createElement("div", {
     className: "notice-modal-content",
     onClick: e => e.stopPropagation()
   }, /*#__PURE__*/React.createElement("div", {
@@ -3503,13 +3564,12 @@ function StudentsPage() {
     }, grade || '채점 전') : /*#__PURE__*/React.createElement("span", {
       className: "stu-missing"
     }, "\uBBF8\uC81C\uCD9C"));
-  }))))))), selectedStudent && /*#__PURE__*/React.createElement("div", {
-    className: "modal-overlay",
-    onClick: () => {
-      setSelectedStudent(null);
-      setIsEditingName(false);
-    }
-  }, /*#__PURE__*/React.createElement("div", {
+  }))))))), selectedStudent && /*#__PURE__*/React.createElement("div", _extends({
+    className: "modal-overlay"
+  }, overlayClose(() => {
+    setSelectedStudent(null);
+    setIsEditingName(false);
+  })), /*#__PURE__*/React.createElement("div", {
     className: "modal",
     onClick: e => e.stopPropagation()
   }, /*#__PURE__*/React.createElement("div", {
@@ -3714,10 +3774,9 @@ function StudentsPage() {
     size: 16
   }))), /*#__PURE__*/React.createElement("div", {
     className: "counseling-content"
-  }, c.content)))))))), showBulkModal && /*#__PURE__*/React.createElement("div", {
-    className: "modal-overlay",
-    onClick: () => setShowBulkModal(false)
-  }, /*#__PURE__*/React.createElement("div", {
+  }, c.content)))))))), showBulkModal && /*#__PURE__*/React.createElement("div", _extends({
+    className: "modal-overlay"
+  }, overlayClose(() => setShowBulkModal(false))), /*#__PURE__*/React.createElement("div", {
     className: "modal",
     onClick: e => e.stopPropagation(),
     style: {
@@ -4140,10 +4199,9 @@ function AttendancePage() {
     className: "btn btn-primary",
     onClick: handleSubmit,
     disabled: !dirty && isSavedDay
-  }, "\uCD9C\uC11D \uC785\uB825 \uC644\uB8CC"))), noteStudent && /*#__PURE__*/React.createElement("div", {
-    className: "modal-overlay",
-    onClick: () => setNoteFor(null)
-  }, /*#__PURE__*/React.createElement("div", {
+  }, "\uCD9C\uC11D \uC785\uB825 \uC644\uB8CC"))), noteStudent && /*#__PURE__*/React.createElement("div", _extends({
+    className: "modal-overlay"
+  }, overlayClose(() => setNoteFor(null))), /*#__PURE__*/React.createElement("div", {
     className: "modal-content att-note-modal",
     role: "dialog",
     "aria-modal": "true",
@@ -5815,9 +5873,22 @@ function StudentApp() {
   const [lunch, setLunch] = useState(undefined);
   const [now, setNow] = useState(() => new Date());
   const hasData = useRef(false);
+  const reload = useRef(() => {});
+  const [stuTab, setStuTab] = useState(() => (location.hash || '').slice(1) || 'today');
+  useEffect(() => {
+    const onHash = () => setStuTab((location.hash || '').slice(1) || 'today');
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+  // 활동 완료 체크 (교실 서버에서만): 고른 학생, 보낸 체크, 안내 문구
+  const [pick, setPick] = useState(null); // { actId, sid }
+  const [openPast, setOpenPast] = useState(null);
+  const [sentDone, setSentDone] = useState({});
+  const [sending, setSending] = useState(false);
+  const [actMsg, setActMsg] = useState({});
   useEffect(() => {
     let alive = true;
-    const load = async () => {
+    const load = reload.current = async () => {
       try {
         const res = await fetch(STUDENT_API_PATH, {
           cache: 'no-store'
@@ -5844,7 +5915,7 @@ function StudentApp() {
     const t = setInterval(() => {
       load();
       setNow(new Date());
-    }, 60000);
+    }, 30000);
     return () => {
       alive = false;
       clearInterval(t);
@@ -5880,8 +5951,246 @@ function StudentApp() {
     const d = new Date(iso);
     return `${d.getMonth() + 1}월 ${d.getDate()}일 ${getDayName(d)}요일`;
   };
+
+  // 투표/설문: 고른 항목, 이 폰에서 낸 표(새로고침해도 기억), 안내 문구
+  const readVoted = () => {
+    try {
+      return JSON.parse(localStorage.getItem('stuVoted') || '{}');
+    } catch {
+      return {};
+    }
+  };
+  const [pollPick, setPollPick] = useState({});
+  const [voted, setVoted] = useState(readVoted);
+  const [pollMsg, setPollMsg] = useState({});
+  const [voting, setVoting] = useState(null);
+  const sendVote = async p => {
+    const option = pollPick[p.id];
+    if (!Number.isInteger(option)) return;
+    setVoting(p.id);
+    setPollMsg(m => ({
+      ...m,
+      [p.id]: ''
+    }));
+    try {
+      const res = await fetch('/api/student/vote', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          pollId: p.id,
+          option
+        })
+      });
+      const err = res.ok ? null : (await res.json().catch(() => ({}))).error;
+      if (res.ok || err === 'already_voted') {
+        const next = {
+          ...readVoted(),
+          [p.id]: res.ok ? option : true
+        };
+        try {
+          localStorage.setItem('stuVoted', JSON.stringify(next));
+        } catch {}
+        setVoted(next);
+        setPollMsg(m => ({
+          ...m,
+          [p.id]: res.ok ? '투표했어요! 친구들 표도 30초마다 새로 반영돼요.' : '이 폰으로는 이미 투표했어요.'
+        }));
+        reload.current();
+      } else if (err === 'poll_closed') {
+        setPollMsg(m => ({
+          ...m,
+          [p.id]: '이 투표는 끝났어요.'
+        }));
+        reload.current();
+      } else throw new Error(err || String(res.status));
+    } catch {
+      setPollMsg(m => ({
+        ...m,
+        [p.id]: '투표를 보내지 못했어요. 잠시 뒤 다시 눌러 주세요.'
+      }));
+    } finally {
+      setVoting(null);
+    }
+  };
+  const act = data?.canCheck ? data.activity : null;
+  const pastActs = data?.canCheck ? (data.activities || []).slice(1) : [];
+  const roster = data?.roster || [];
+  const doneOf = a => new Set([...(a?.done || []), ...(a ? Object.keys(sentDone[a.id] || {}) : [])]);
+  const setMsgFor = (id, m) => setActMsg(prev => ({
+    ...prev,
+    [id]: m
+  }));
+  const sendDone = async a => {
+    const picked = pick && pick.actId === a.id ? roster.find(s => s.id === pick.sid) : null;
+    if (!picked) return;
+    setSending(true);
+    setMsgFor(a.id, '');
+    try {
+      const res = await fetch('/api/student/check', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          activityId: a.id,
+          studentId: picked.id
+        })
+      });
+      if (res.status === 409) {
+        setMsgFor(a.id, '선생님이 이 활동을 지웠어요.');
+        setPick(null);
+        reload.current();
+        return;
+      }
+      if (!res.ok) throw new Error(String(res.status));
+      setSentDone(prev => ({
+        ...prev,
+        [a.id]: {
+          ...(prev[a.id] || {}),
+          [picked.id]: true
+        }
+      }));
+      setMsgFor(a.id, `${picked.name} 학생, 완료를 선생님께 보냈어요.`);
+      setPick(null);
+    } catch {
+      setMsgFor(a.id, '보내지 못했어요. 잠시 뒤 다시 눌러 주세요.');
+    } finally {
+      setSending(false);
+    }
+  };
+  // 활동 하나의 완료 체크 화면 (오늘의 활동, 펼친 지난 활동이 함께 씀)
+  const renderActBody = a => {
+    const done = doneOf(a);
+    const pct = roster.length ? Math.round(done.size / roster.length * 100) : 0;
+    const picked = pick && pick.actId === a.id ? roster.find(s => s.id === pick.sid) : null;
+    return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      className: "lrn-track",
+      role: "progressbar",
+      "aria-label": "\uC644\uB8CC\uC728",
+      "aria-valuenow": pct,
+      "aria-valuemin": 0,
+      "aria-valuemax": 100
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        width: `${pct}%`
+      },
+      className: pct === 100 ? 'is-done' : ''
+    })), /*#__PURE__*/React.createElement("p", {
+      className: "lrn-hint"
+    }, "\uD65C\uB3D9\uC744 \uB05D\uB0C8\uC73C\uBA74 ", /*#__PURE__*/React.createElement("strong", null, "\uB0B4 \uC774\uB984"), "\uC744 \uB20C\uB7EC \uC54C\uB824 \uC8FC\uC138\uC694. \uC798\uBABB \uB20C\uB800\uB2E4\uBA74 \uC120\uC0DD\uB2D8\uAED8 \uB9D0\uD574 \uC8FC\uC138\uC694."), picked && /*#__PURE__*/React.createElement("div", {
+      className: "stu-confirm",
+      role: "alertdialog",
+      "aria-labelledby": `stu-confirm-${a.id}`
+    }, /*#__PURE__*/React.createElement("p", {
+      id: `stu-confirm-${a.id}`
+    }, /*#__PURE__*/React.createElement("strong", {
+      className: "num"
+    }, picked.number), "\uBC88 ", /*#__PURE__*/React.createElement("strong", null, picked.name), ", \uD65C\uB3D9\uC744 \uB05D\uB0C8\uB098\uC694?"), /*#__PURE__*/React.createElement("div", {
+      className: "stu-confirm-actions"
+    }, /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "btn btn-secondary",
+      onClick: () => setPick(null),
+      disabled: sending
+    }, "\uC544\uB2C8\uC5D0\uC694"), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "btn btn-primary",
+      onClick: () => sendDone(a),
+      disabled: sending
+    }, sending ? '보내는 중…' : '네, 끝냈어요'))), actMsg[a.id] && /*#__PURE__*/React.createElement("p", {
+      className: "stu-act-msg",
+      role: "status"
+    }, actMsg[a.id]), /*#__PURE__*/React.createElement("ul", {
+      className: "lrn-grid stu-act-grid"
+    }, roster.map(s => {
+      const isDone = done.has(s.id);
+      const isPicked = pick && pick.actId === a.id && pick.sid === s.id;
+      return /*#__PURE__*/React.createElement("li", {
+        key: s.id
+      }, /*#__PURE__*/React.createElement("button", {
+        type: "button",
+        "aria-pressed": isDone,
+        disabled: isDone,
+        className: `lrn-student ${isDone ? 'is-done' : ''} ${isPicked ? 'is-picked' : ''}`,
+        onClick: () => {
+          setMsgFor(a.id, '');
+          setPick({
+            actId: a.id,
+            sid: s.id
+          });
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "att-box"
+      }), /*#__PURE__*/React.createElement("span", {
+        className: "att-no num"
+      }, s.number), /*#__PURE__*/React.createElement("span", {
+        className: "lrn-name"
+      }, s.name)));
+    })));
+  };
+  const doneSet = doneOf(act);
+  const ddayCard = ddays.length > 0 ? /*#__PURE__*/React.createElement("section", {
+    className: "wcard",
+    "aria-label": "\uB2E4\uAC00\uC624\uB294 \uB0A0"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wcard-head"
+  }, /*#__PURE__*/React.createElement("h2", {
+    className: "wcard-title"
+  }, "\uB2E4\uAC00\uC624\uB294 \uB0A0")), /*#__PURE__*/React.createElement("div", {
+    className: "wcard-body"
+  }, /*#__PURE__*/React.createElement("ul", {
+    className: "dday-rows"
+  }, ddays.map((ev, i) => /*#__PURE__*/React.createElement("li", {
+    key: i,
+    className: `dday-row ${i === 0 ? 'is-next' : ''}`
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dday-num num"
+  }, getDday(ev.date)), /*#__PURE__*/React.createElement("span", {
+    className: "dday-text"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dday-title"
+  }, ev.emoji ? `${ev.emoji} ` : '', ev.name), /*#__PURE__*/React.createElement("span", {
+    className: "dday-when"
+  }, shortDate(ev.date), ev.auto && /*#__PURE__*/React.createElement("span", {
+    className: "dday-auto"
+  }, ev.auto)))))))) : null;
+
+  // 탭: 주소 끝 #today / #act / #notice / #class / #links 로도 바로 열 수 있음
+  const STU_TABS = [{
+    key: 'today',
+    label: '오늘',
+    icon: 'calendar'
+  }, {
+    key: 'act',
+    label: '활동',
+    icon: 'learning',
+    badge: (act && act.done.length < roster.length ? 1 : 0) + (data?.polls || []).filter(p => !p.myVote && voted[p.id] === undefined).length
+  }, {
+    key: 'notice',
+    label: '공지',
+    icon: 'weekly'
+  }, {
+    key: 'class',
+    label: '우리 반',
+    icon: 'students'
+  }, {
+    key: 'links',
+    label: '바로가기',
+    icon: 'links'
+  }];
+  const tab = STU_TABS.some(t => t.key === stuTab) ? stuTab : 'today';
+  const goTab = k => {
+    setStuTab(k);
+    try {
+      history.replaceState(null, '', '#' + k);
+    } catch {}
+    window.scrollTo(0, 0);
+  };
+  const hasAct = !!act || (data?.polls?.length || 0) > 0;
   return /*#__PURE__*/React.createElement("div", {
-    className: "stu"
+    className: "stu has-tabs"
   }, /*#__PURE__*/React.createElement("header", {
     className: "stu-top"
   }, /*#__PURE__*/React.createElement("span", {
@@ -5896,7 +6205,162 @@ function StudentApp() {
     className: "dash-headline"
   }, headline)), problem && !data && /*#__PURE__*/React.createElement("div", {
     className: "stu-msg"
-  }, problem), data && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("section", {
+  }, problem), /*#__PURE__*/React.createElement("nav", {
+    className: "stu-tabs",
+    "aria-label": "\uD559\uC0DD \uD654\uBA74 \uBA54\uB274"
+  }, STU_TABS.map(t => /*#__PURE__*/React.createElement("button", {
+    key: t.key,
+    type: "button",
+    className: 'stu-tab' + (tab === t.key ? ' is-on' : ''),
+    "aria-current": tab === t.key ? 'page' : undefined,
+    onClick: () => goTab(t.key)
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: t.icon,
+    size: 22
+  }), /*#__PURE__*/React.createElement("span", null, t.label), t.badge > 0 && /*#__PURE__*/React.createElement("span", {
+    className: "stu-tab-dot",
+    "aria-label": "\uC0C8 \uD65C\uB3D9\uC774\uB098 \uD22C\uD45C\uAC00 \uC788\uC5B4\uC694"
+  })))), tab === 'act' && act && /*#__PURE__*/React.createElement("section", {
+    className: "wcard stu-act",
+    "aria-label": "\uC624\uB298\uC758 \uD65C\uB3D9"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wcard-head"
+  }, /*#__PURE__*/React.createElement("h2", {
+    className: "wcard-title"
+  }, "\uC624\uB298\uC758 \uD65C\uB3D9"), /*#__PURE__*/React.createElement("span", {
+    className: "wcard-meta"
+  }, /*#__PURE__*/React.createElement("strong", {
+    className: "num lrn-done"
+  }, doneSet.size), " / ", /*#__PURE__*/React.createElement("span", {
+    className: "num"
+  }, roster.length), "\uBA85 \uC644\uB8CC")), /*#__PURE__*/React.createElement("div", {
+    className: "wcard-body"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "stu-act-title"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: `lrn-type ${act.type === '수행평가' ? 'is-eval' : ''}`
+  }, act.type), /*#__PURE__*/React.createElement("strong", null, act.title)), renderActBody(act))), tab === 'act' && pastActs.length > 0 && /*#__PURE__*/React.createElement("section", {
+    className: "wcard stu-past",
+    "aria-label": "\uC9C0\uB09C \uD65C\uB3D9"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wcard-head"
+  }, /*#__PURE__*/React.createElement("h2", {
+    className: "wcard-title"
+  }, "\uC9C0\uB09C \uD65C\uB3D9"), /*#__PURE__*/React.createElement("span", {
+    className: "wcard-meta"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "num"
+  }, pastActs.length), "\uAC1C")), /*#__PURE__*/React.createElement("div", {
+    className: "wcard-body"
+  }, /*#__PURE__*/React.createElement("ul", {
+    className: "stu-past-list"
+  }, pastActs.map(a => {
+    const done = doneOf(a);
+    const pct = roster.length ? Math.round(done.size / roster.length * 100) : 0;
+    const isOpen = openPast === a.id;
+    return /*#__PURE__*/React.createElement("li", {
+      key: a.id,
+      className: `stu-past-item ${isOpen ? 'is-open' : ''}`
+    }, /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "stu-past-row",
+      "aria-expanded": isOpen,
+      onClick: () => {
+        setPick(null);
+        setOpenPast(isOpen ? null : a.id);
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      className: `lrn-type ${a.type === '수행평가' ? 'is-eval' : ''}`
+    }, a.type), /*#__PURE__*/React.createElement("span", {
+      className: "stu-past-text"
+    }, /*#__PURE__*/React.createElement("strong", null, a.title), /*#__PURE__*/React.createElement("span", {
+      className: "num"
+    }, a.date ? a.date.slice(5).replace('-', '/') : '', " \xB7 ", done.size, "/", roster.length, "\uBA85 \uC644\uB8CC")), /*#__PURE__*/React.createElement("span", {
+      className: "stu-past-bar"
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        width: `${pct}%`
+      },
+      className: pct === 100 ? 'is-done' : ''
+    })), /*#__PURE__*/React.createElement("span", {
+      className: "stu-past-chev",
+      "aria-hidden": "true"
+    }, /*#__PURE__*/React.createElement(Icon, {
+      name: "chevron",
+      size: 16
+    }))), isOpen && /*#__PURE__*/React.createElement("div", {
+      className: "stu-past-body"
+    }, renderActBody(a)));
+  })))), tab === 'act' && data?.polls?.length > 0 && data.polls.map(p => {
+    const total = p.votes.reduce((a, b) => a + b, 0);
+    const done = p.myVote || voted[p.id] !== undefined;
+    const canVote = data.canCheck && !done;
+    const mine = Number.isInteger(voted[p.id]) ? voted[p.id] : null;
+    return /*#__PURE__*/React.createElement("section", {
+      key: p.id,
+      className: "wcard stu-poll",
+      "aria-label": `투표: ${p.question}`
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "wcard-head"
+    }, /*#__PURE__*/React.createElement("h2", {
+      className: "wcard-title"
+    }, "\uD22C\uD45C"), /*#__PURE__*/React.createElement("span", {
+      className: "wcard-meta"
+    }, "\uCD1D ", /*#__PURE__*/React.createElement("strong", {
+      className: "num"
+    }, total), "\uD45C")), /*#__PURE__*/React.createElement("div", {
+      className: "wcard-body"
+    }, /*#__PURE__*/React.createElement("p", {
+      className: "stu-poll-q"
+    }, p.question), canVote ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      className: "stu-poll-opts",
+      role: "radiogroup",
+      "aria-label": p.question
+    }, p.options.map((o, i) => /*#__PURE__*/React.createElement("button", {
+      key: i,
+      type: "button",
+      role: "radio",
+      "aria-checked": pollPick[p.id] === i,
+      className: `stu-poll-opt ${pollPick[p.id] === i ? 'is-picked' : ''}`,
+      onClick: () => setPollPick(m => ({
+        ...m,
+        [p.id]: i
+      }))
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "stu-poll-dot",
+      "aria-hidden": "true"
+    }), o))), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "btn btn-primary stu-poll-send",
+      disabled: !Number.isInteger(pollPick[p.id]) || voting === p.id,
+      onClick: () => sendVote(p)
+    }, voting === p.id ? '보내는 중…' : '투표하기')) : /*#__PURE__*/React.createElement("ul", {
+      className: "stu-poll-results"
+    }, p.options.map((o, i) => {
+      const pct = total ? Math.round(p.votes[i] / total * 100) : 0;
+      return /*#__PURE__*/React.createElement("li", {
+        key: i,
+        className: mine === i ? 'is-mine' : ''
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "stu-poll-label"
+      }, o, mine === i && /*#__PURE__*/React.createElement("em", null, " \xB7 \uB0B4 \uC120\uD0DD")), /*#__PURE__*/React.createElement("span", {
+        className: "stu-poll-num num"
+      }, p.votes[i], "\uD45C"), /*#__PURE__*/React.createElement("span", {
+        className: "stu-poll-bar"
+      }, /*#__PURE__*/React.createElement("span", {
+        style: {
+          width: `${pct}%`
+        }
+      })));
+    })), !data.canCheck && !done && /*#__PURE__*/React.createElement("p", {
+      className: "lrn-hint"
+    }, "\uD22C\uD45C\uB294 \uAD50\uC2E4 Wi-Fi\uC5D0\uC11C \uD560 \uC218 \uC788\uC5B4\uC694."), pollMsg[p.id] && /*#__PURE__*/React.createElement("p", {
+      className: "stu-act-msg",
+      role: "status"
+    }, pollMsg[p.id])));
+  }), tab === 'act' && data && !hasAct && /*#__PURE__*/React.createElement("div", {
+    className: "stu-msg"
+  }, "\uC9C0\uAE08\uC740 \uD560 \uD65C\uB3D9\uC774\uB098 \uD22C\uD45C\uAC00 \uC5C6\uC5B4\uC694."), tab === 'today' && data && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("section", {
     className: "wcard",
     "aria-label": "\uC624\uB298\uC758 \uC2DC\uAC04\uD45C"
   }, /*#__PURE__*/React.createElement("div", {
@@ -5922,7 +6386,7 @@ function StudentApp() {
     className: "stu-p-content"
   }, c.content))))) : /*#__PURE__*/React.createElement("div", {
     className: "wcard-empty"
-  }, "\uC624\uB298\uC740 \uB4F1\uB85D\uB41C \uC218\uC5C5\uC774 \uC5C6\uC5B4\uC694.")))), /*#__PURE__*/React.createElement("section", {
+  }, "\uC624\uB298\uC740 \uB4F1\uB85D\uB41C \uC218\uC5C5\uC774 \uC5C6\uC5B4\uC694.")))), tab === 'today' && /*#__PURE__*/React.createElement("section", {
     className: "wcard",
     "aria-label": "\uC624\uB298\uC758 \uAE09\uC2DD"
   }, /*#__PURE__*/React.createElement("div", {
@@ -5941,29 +6405,9 @@ function StudentApp() {
     key: i
   }, m))) : /*#__PURE__*/React.createElement("div", {
     className: "wcard-empty"
-  }, "\uC624\uB298\uC740 \uAE09\uC2DD \uC815\uBCF4\uAC00 \uC5C6\uC5B4\uC694."))), data && /*#__PURE__*/React.createElement(React.Fragment, null, ddays.length > 0 && /*#__PURE__*/React.createElement("section", {
-    className: "wcard",
-    "aria-label": "\uB2E4\uAC00\uC624\uB294 \uB0A0"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "wcard-head"
-  }, /*#__PURE__*/React.createElement("h2", {
-    className: "wcard-title"
-  }, "\uB2E4\uAC00\uC624\uB294 \uB0A0")), /*#__PURE__*/React.createElement("div", {
-    className: "wcard-body"
-  }, /*#__PURE__*/React.createElement("ul", {
-    className: "dday-rows"
-  }, ddays.map((ev, i) => /*#__PURE__*/React.createElement("li", {
-    key: i,
-    className: `dday-row ${i === 0 ? 'is-next' : ''}`
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "dday-num num"
-  }, getDday(ev.date)), /*#__PURE__*/React.createElement("span", {
-    className: "dday-text"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "dday-title"
-  }, ev.emoji ? `${ev.emoji} ` : '', ev.name), /*#__PURE__*/React.createElement("span", {
-    className: "dday-when"
-  }, shortDate(ev.date)))))))), data.announcements?.length > 0 && /*#__PURE__*/React.createElement("section", {
+  }, "\uC624\uB298\uC740 \uAE09\uC2DD \uC815\uBCF4\uAC00 \uC5C6\uC5B4\uC694."))), data && /*#__PURE__*/React.createElement(React.Fragment, null, tab === 'today' && ddayCard, tab === 'notice' && !data.announcements?.length && !ddays.length && /*#__PURE__*/React.createElement("div", {
+    className: "stu-msg"
+  }, "\uC9C0\uAE08\uC740 \uACF5\uC9C0\uAC00 \uC5C6\uC5B4\uC694."), tab === 'notice' && data.announcements?.length > 0 && /*#__PURE__*/React.createElement("section", {
     className: "wcard",
     "aria-label": "\uACF5\uC9C0\uC0AC\uD56D"
   }, /*#__PURE__*/React.createElement("div", {
@@ -5987,7 +6431,7 @@ function StudentApp() {
     className: "notice-card-title"
   }, n.title), n.content && /*#__PURE__*/React.createElement("p", {
     className: "notice-card-body"
-  }, n.content)))))), th && /*#__PURE__*/React.createElement("section", {
+  }, n.content)))))), tab === 'notice' && ddayCard, tab === 'class' && th && /*#__PURE__*/React.createElement("section", {
     className: "wcard wcard--accent",
     "aria-label": "\uC6B0\uB9AC \uBC18 \uCE6D\uCC2C \uC628\uB3C4\uACC4"
   }, /*#__PURE__*/React.createElement("div", {
@@ -6016,7 +6460,7 @@ function StudentApp() {
     }
   })), th.reward && /*#__PURE__*/React.createElement("p", {
     className: "thermo-note"
-  }, th.total >= th.goal ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("strong", null, "\uBAA9\uD45C \uB2EC\uC131!"), " \uC774\uC81C ", /*#__PURE__*/React.createElement("strong", null, th.reward), " \uC2DC\uAC04\uC774\uC5D0\uC694.") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("strong", null, th.goal - th.total, "\uC810\uB9CC \uB354!"), " \uBAA9\uD45C\uB97C \uCC44\uC6B0\uBA74 ", /*#__PURE__*/React.createElement("strong", null, th.reward), "\uC744(\uB97C) \uD574\uC694.")))), data.ranking?.length > 0 && /*#__PURE__*/React.createElement("section", {
+  }, th.total >= th.goal ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("strong", null, "\uBAA9\uD45C \uB2EC\uC131!"), " \uC774\uC81C ", /*#__PURE__*/React.createElement("strong", null, th.reward), " \uC2DC\uAC04\uC774\uC5D0\uC694.") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("strong", null, th.goal - th.total, "\uC810\uB9CC \uB354!"), " \uBAA9\uD45C\uB97C \uCC44\uC6B0\uBA74 ", /*#__PURE__*/React.createElement("strong", null, th.reward), "\uC744(\uB97C) \uD574\uC694.")))), tab === 'class' && data.ranking?.length > 0 && /*#__PURE__*/React.createElement("section", {
     className: "wcard",
     "aria-label": "\uCE6D\uCC2C \uB7AD\uD0B9"
   }, /*#__PURE__*/React.createElement("div", {
@@ -6044,7 +6488,9 @@ function StudentApp() {
     style: {
       width: `${Math.round(s.points / topScore * 100)}%`
     }
-  }))))))), data.links?.length > 0 && /*#__PURE__*/React.createElement("section", {
+  }))))))), tab === 'links' && !data.links?.length && /*#__PURE__*/React.createElement("div", {
+    className: "stu-msg"
+  }, "\uC120\uC0DD\uB2D8\uC774 \uC544\uC9C1 \uBC14\uB85C\uAC00\uAE30\uB97C \uB123\uC9C0 \uC54A\uC558\uC5B4\uC694."), tab === 'links' && data.links?.length > 0 && /*#__PURE__*/React.createElement("section", {
     className: "wcard",
     "aria-label": "\uBC14\uB85C\uAC00\uAE30"
   }, /*#__PURE__*/React.createElement("div", {
@@ -6073,7 +6519,7 @@ function StudentApp() {
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit'
-  }), "\uC5D0 \uC62C\uB9B0 \uB0B4\uC6A9\uC774\uC5D0\uC694. 1\uBD84\uB9C8\uB2E4 \uC0C8\uB85C \uD655\uC778\uD574\uC694.")));
+  }), "\uC5D0 \uC62C\uB9B0 \uB0B4\uC6A9\uC774\uC5D0\uC694. 30\uCD08\uB9C8\uB2E4 \uC0C8\uB85C \uD655\uC778\uD574\uC694.")));
 }
 function Root() {
   if (new URLSearchParams(location.search).has('student')) return /*#__PURE__*/React.createElement(StudentApp, null);

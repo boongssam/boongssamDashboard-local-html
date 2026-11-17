@@ -996,3 +996,73 @@ body.has-full-tool { overflow: hidden; }
 .stu-foot { margin: 0; text-align: center; font-size: 12px; color: var(--ink-4); }
 .share-link { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 10px; border-radius: 10px; background: var(--paper); }
 .share-link code { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
+
+/* 학생 폰: 오늘의 활동 완료 체크 (교실 서버) */
+.stu-act .wcard-body { display: flex; flex-direction: column; gap: 12px; }
+.stu-act-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.stu-act-title strong { font-size: 18px; min-width: 0; overflow-wrap: anywhere; }
+.stu-act .lrn-hint { margin: 0; }
+.stu-act-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 140px), 1fr)); }
+.stu-act .lrn-student:disabled { cursor: default; }
+.stu-act .lrn-student.is-picked { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink) inset; }
+.stu-confirm { position: sticky; top: 8px; z-index: 5; display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-radius: 14px; background: var(--ink); color: #FFFFFF; box-shadow: var(--shadow-lg); }
+.stu-confirm p { margin: 0; font-size: 16px; }
+.stu-confirm-actions { display: flex; gap: 8px; }
+.stu-confirm-actions .btn { flex: 1; min-height: 44px; }
+.stu-confirm .btn-secondary { background: #3A322C; color: #FFFFFF; }
+.stu-act-msg { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--st-present-wash, #E9F4EC); color: var(--st-present-ink, #24663F); font-size: 14px; font-weight: 600; }
+
+/* 학생 폰: 투표/설문 */
+.stu-poll .wcard-body { display: flex; flex-direction: column; gap: 12px; }
+.stu-poll-q { margin: 0; font-size: 18px; font-weight: 700; overflow-wrap: anywhere; }
+.stu-poll-opts { display: flex; flex-direction: column; gap: 8px; }
+.stu-poll-opt { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); font-size: 16px; font-weight: 600; text-align: left; overflow-wrap: anywhere; transition: border-color 0.15s, background 0.15s; }
+.stu-poll-opt:hover { background: #FBF8F5; }
+.stu-poll-dot { width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%; border: 2px solid #CFC5BC; background: var(--surface); }
+.stu-poll-opt.is-picked { border-color: var(--carrot-btn); box-shadow: 0 0 0 1px var(--carrot-btn) inset; background: #FFFAF6; }
+.stu-poll-opt.is-picked .stu-poll-dot { border-color: var(--carrot-btn); box-shadow: inset 0 0 0 4px #FFFFFF; background: var(--carrot-btn); }
+.stu-poll-send { min-height: 48px; }
+.stu-poll-send:disabled { opacity: 0.45; cursor: default; }
+.stu-poll-results { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.stu-poll-results li { display: grid; grid-template-columns: 1fr auto; row-gap: 6px; column-gap: 12px; align-items: center; }
+.stu-poll-label { font-size: 15px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.stu-poll-label em { font-style: normal; color: var(--carrot-ink); font-size: 13px; }
+.stu-poll-num { font-size: 15px; font-weight: 700; }
+.stu-poll-bar { grid-column: 1 / 3; height: 8px; border-radius: 8px; background: var(--line-soft); display: flex; overflow: hidden; }
+.stu-poll-bar > span { background: #F59A5E; border-radius: 8px; }
+.stu-poll-results li.is-mine .stu-poll-bar > span { background: var(--carrot); }
+
+/* 학생 화면 탭: 휴대폰은 화면 아래 고정, 넓은 화면은 제목 아래 가로 탭 */
+.stu-tabs { display: flex; gap: 4px; padding: 4px; background: var(--muted-fill); border-radius: 16px; }
+.stu-tab { position: relative; flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-height: 52px; padding: 6px 4px; border-radius: 12px; color: var(--ink-3); font-size: 12px; font-weight: 700; white-space: nowrap; transition: background 0.15s, color 0.15s; }
+.stu-tab:hover { color: var(--ink); }
+.stu-tab.is-on { background: var(--surface); color: var(--carrot-ink); box-shadow: 0 1px 3px rgba(60, 35, 15, 0.12); }
+.stu-tab-dot { position: absolute; top: 8px; right: calc(50% - 18px); width: 8px; height: 8px; border-radius: 50%; background: var(--carrot); box-shadow: 0 0 0 2px var(--muted-fill); }
+.stu-tab.is-on .stu-tab-dot { box-shadow: 0 0 0 2px var(--surface); }
+@media (max-width: 640px) {
+  .stu.has-tabs { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
+  .stu-tabs {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; border-radius: 0; gap: 0;
+    padding: 6px max(8px, env(safe-area-inset-left, 0px)) calc(6px + env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-right, 0px));
+    background: rgba(255, 253, 251, 0.97); border-top: 1px solid var(--line); backdrop-filter: blur(8px);
+  }
+  .stu-tab.is-on { background: var(--carrot-wash); box-shadow: none; }
+  .stu-tab.is-on .stu-tab-dot { box-shadow: 0 0 0 2px var(--carrot-wash); }
+}
+
+/* 학생 폰: 지난 활동 목록 */
+.stu-past .wcard-body { padding-top: 8px; }
+.stu-past-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.stu-past-item + .stu-past-item { border-top: 1px solid var(--line-soft); }
+.stu-past-row { display: grid; grid-template-columns: auto 1fr auto; grid-template-rows: auto auto; align-items: center; column-gap: 10px; row-gap: 6px; width: 100%; padding: 12px 2px; text-align: left; color: var(--ink); }
+.stu-past-row .lrn-type { grid-row: 1; }
+.stu-past-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.stu-past-text strong { font-size: 15px; overflow-wrap: anywhere; }
+.stu-past-text span { font-size: 12px; font-weight: 600; color: var(--ink-3); }
+.stu-past-bar { grid-column: 1 / 4; height: 5px; border-radius: 5px; background: var(--line-soft); display: flex; overflow: hidden; }
+.stu-past-bar > span { background: #F59A5E; border-radius: 5px; }
+.stu-past-bar > span.is-done { background: var(--st-present, #2F8A55); }
+.stu-past-chev { grid-row: 1; grid-column: 3; color: var(--ink-4); transform: rotate(-90deg); transition: transform 0.2s var(--ease-out); }
+.stu-past-item.is-open .stu-past-chev { transform: rotate(90deg); }
+.stu-past-body { display: flex; flex-direction: column; gap: 12px; padding: 4px 0 16px; }
+.stu-past-item.is-open .stu-past-bar { display: none; } /* 펼치면 아래 큰 막대만 */
