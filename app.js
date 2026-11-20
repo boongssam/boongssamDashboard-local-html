@@ -29,6 +29,9 @@ const {
   fetchSchoolHoliday
 } = window.NeisApi;
 const {
+  fetchWeather
+} = window.WeatherApi;
+const {
   generateBehaviorSummary
 } = window.GeminiApi;
 const {
@@ -1158,6 +1161,13 @@ const ICON_PATHS = {
     height: "5",
     rx: "1.5"
   })),
+  clock: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("circle", {
+    cx: "12",
+    cy: "12",
+    r: "9"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M12 7v5l3 2"
+  })),
   weekly: /*#__PURE__*/React.createElement("path", {
     d: "M4 6h16M4 12h16M4 18h10"
   }),
@@ -1663,6 +1673,233 @@ const MOBILE_LABELS = {
   '/links': '링크',
   '/students': '학생'
 };
+
+// 쉬는 시간 안내: 수업과 수업 사이에 "쉬는 시간이 N분 남았어요"를 보여주고, 누르면 전체화면 타이머가 열림
+function BreakTimer({
+  schedule
+}) {
+  const [tick, setTick] = useState(() => Date.now());
+  const [full, setFull] = useState(null); // { from, to, nextLabel } (초 단위, 자정부터)
+  const boxRef = useRef(null);
+  const [showTime, setShowTime] = useState(false); // 수업 중에는 기본으로 남은 시간을 숨김
+  useEffect(() => {
+    const t = setInterval(() => setTick(Date.now()), full ? 250 : 10000);
+    return () => clearInterval(t);
+  }, [!!full]);
+  const secOf = ms => {
+    const d = new Date(ms);
+    return d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds() + d.getMilliseconds() / 1000;
+  };
+  const nowSec = secOf(tick),
+    nowMin = Math.floor(nowSec / 60);
+  const cur = schedule.find(c => nowMin >= c.start && nowMin <= c.end);
+  const inClass = !!cur;
+  const next = schedule.find(c => c.start > nowMin);
+  const prev = [...schedule].reverse().find(c => c.end < nowMin);
+  const onBreak = !inClass && next && prev;
+  const close = useCallback(() => {
+    setFull(null);
+    try {
+      if (document.fullscreenElement) document.exitFullscreen();
+    } catch {}
+  }, []);
+  useEffect(() => {
+    if (!full) return;
+    const onKey = e => {
+      if (e.key === 'Escape') close();
+    };
+    const onFs = () => {
+      if (!document.fullscreenElement) setFull(null);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('fullscreenchange', onFs);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('fullscreenchange', onFs);
+    };
+  }, [full, close]);
+  // 시간이 다 되면 짧은 알림음 (브라우저가 막으면 조용히 넘어감)
+  const left = full ? Math.max(0, full.to - nowSec) : 0;
+  const beeped = useRef(false);
+  useEffect(() => {
+    if (!full) {
+      beeped.current = false;
+      return;
+    }
+    if (left <= 0 && !beeped.current && full.kind !== 'class') {
+      beeped.current = true;
+      try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        const ctx = new Ctx();
+        [0, 0.35, 0.7].forEach(t => {
+          const o = ctx.createOscillator(),
+            g = ctx.createGain();
+          o.frequency.value = 880;
+          g.gain.value = 0.15;
+          o.connect(g);
+          g.connect(ctx.destination);
+          o.start(ctx.currentTime + t);
+          o.stop(ctx.currentTime + t + 0.2);
+        });
+      } catch {}
+    }
+  }, [full, left <= 0]);
+  const open = () => {
+    setShowTime(false);
+    if (cur) setFull({
+      kind: 'class',
+      clock: `${minToClock(cur.start)}–${minToClock(cur.end)}`,
+      from: cur.start * 60,
+      to: cur.end * 60,
+      title: `${cur.period}교시 ${cur.subject}`,
+      content: cur.content || '',
+      nextLabel: next ? `${next.period}교시 ${next.subject}` : '',
+      nextTime: next ? `${minToClock(next.start)}–${minToClock(next.end)}` : ''
+    });else setFull({
+      kind: 'break',
+      from: prev.end * 60,
+      to: next.start * 60,
+      nextLabel: `${next.period}교시 ${next.subject}`,
+      nextTime: `${minToClock(next.start)}–${minToClock(next.end)}`
+    });
+    setTimeout(() => {
+      try {
+        boxRef.current?.requestFullscreen?.();
+      } catch {}
+    }, 0);
+  };
+  const classMins = cur ? Math.max(1, Math.ceil((cur.end * 60 - nowSec) / 60)) : 0;
+  const mins = onBreak ? Math.max(1, Math.ceil((next.start * 60 - nowSec) / 60)) : 0;
+  const mm = String(Math.floor(Math.ceil(left) / 60)).padStart(2, '0'),
+    ss = String(Math.ceil(left) % 60).padStart(2, '0');
+  const total = full ? Math.max(1, full.to - full.from) : 1;
+  const pct = full ? Math.min(100, Math.max(0, (nowSec - full.from) / total * 100)) : 0;
+  return /*#__PURE__*/React.createElement(React.Fragment, null, cur && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "brk-chip is-class",
+    onClick: open
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "clock",
+    size: 16
+  }), /*#__PURE__*/React.createElement("strong", null, cur.period, "\uAD50\uC2DC ", cur.subject), " \uD559\uC2B5 \uC548\uB0B4", /*#__PURE__*/React.createElement("span", {
+    className: "brk-chip-hint"
+  }, "\uB20C\uB7EC\uC11C \uD06C\uAC8C \uBCF4\uAE30")), onBreak && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "brk-chip",
+    onClick: open
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "clock",
+    size: 16
+  }), "\uC26C\uB294 \uC2DC\uAC04\uC774 ", /*#__PURE__*/React.createElement("strong", {
+    className: "num"
+  }, mins, "\uBD84"), " \uB0A8\uC558\uC5B4\uC694", /*#__PURE__*/React.createElement("span", {
+    className: "brk-chip-hint"
+  }, "\uB20C\uB7EC\uC11C \uD0C0\uC774\uBA38 \uD06C\uAC8C \uBCF4\uAE30")), full && /*#__PURE__*/React.createElement("div", {
+    className: "brk-full",
+    ref: boxRef,
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-label": full.kind === 'class' ? '수업 안내' : '쉬는 시간 타이머',
+    onClick: close
+  }, full.kind === 'class' ? /*#__PURE__*/React.createElement("div", {
+    className: "brk-full-inner",
+    onClick: e => e.stopPropagation()
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "brk-full-label"
+  }, "\uC9C0\uAE08\uC740"), /*#__PURE__*/React.createElement("h2", {
+    className: "brk-full-title"
+  }, full.title), full.content ? /*#__PURE__*/React.createElement("p", {
+    className: "brk-full-content"
+  }, full.content) : /*#__PURE__*/React.createElement("p", {
+    className: "brk-full-content is-empty"
+  }, "\uC8FC\uAC04 \uC77C\uC815\uC5D0 \uD559\uC2B5 \uB0B4\uC6A9\uC744 \uC801\uC73C\uBA74 \uC5EC\uAE30\uC5D0 \uD06C\uAC8C \uBCF4\uC5EC\uC694."), /*#__PURE__*/React.createElement("div", {
+    className: "brk-full-quiet"
+  }, showTime ? /*#__PURE__*/React.createElement("span", null, full.clock, " \xB7 \uC57D ", /*#__PURE__*/React.createElement("strong", {
+    className: "num"
+  }, Math.max(0, Math.ceil(left / 60)), "\uBD84"), " \uB0A8\uC74C") : /*#__PURE__*/React.createElement("span", null, full.clock), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => setShowTime(v => !v)
+  }, showTime ? '남은 시간 숨기기' : '남은 시간 보기'))) : /*#__PURE__*/React.createElement("div", {
+    className: "brk-full-inner",
+    onClick: e => e.stopPropagation()
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "brk-full-label"
+  }, left > 0 ? '쉬는 시간' : '수업 시간이에요'), /*#__PURE__*/React.createElement("div", {
+    className: `brk-full-time num ${left <= 0 ? 'is-over' : left <= 60 ? 'is-soon' : ''}`
+  }, left > 0 ? `${mm}:${ss}` : '00:00'), /*#__PURE__*/React.createElement("div", {
+    className: "brk-full-track",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: `${pct}%`
+    }
+  })), full.nextLabel && /*#__PURE__*/React.createElement("p", {
+    className: "brk-full-next"
+  }, "\uB2E4\uC74C \uC218\uC5C5 ", /*#__PURE__*/React.createElement("strong", null, full.nextLabel), " ", /*#__PURE__*/React.createElement("span", {
+    className: "num"
+  }, full.nextTime))), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "brk-full-close",
+    onClick: close
+  }, "\uB2EB\uAE30 (Esc)")));
+}
+
+// 대시보드 위쪽: 오늘 날짜 · 요일 · 날씨/기온 · 미세먼지/초미세먼지 (1시간마다 새로 불러옴)
+function WeatherStrip({
+  today
+}) {
+  // 마지막으로 받은 값을 기억해 두었다가 바로 보여주고, 뒤에서 새로 불러와 갈아끼움 (1시간 넘은 값은 안 씀)
+  const [wx, setWx] = useState(() => {
+    try {
+      const c = JSON.parse(localStorage.getItem('wxCache') || 'null');
+      return c && Date.now() - c.at < 60 * 60 * 1000 ? c.data : null;
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    let alive = true;
+    const load = () => fetchWeather().then(r => {
+      if (alive && r) {
+        setWx(r);
+        try {
+          localStorage.setItem('wxCache', JSON.stringify({
+            at: Date.now(),
+            data: r
+          }));
+        } catch {}
+      }
+    }).catch(() => {});
+    load();
+    const t = setInterval(load, 60 * 60 * 1000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
+  const dust = (name, d) => d ? /*#__PURE__*/React.createElement("span", {
+    className: `wx-dust is-l${d.level}`
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "wx-dust-name"
+  }, name), /*#__PURE__*/React.createElement("strong", null, d.label), /*#__PURE__*/React.createElement("span", {
+    className: "num wx-dust-val"
+  }, d.value, "\u338D")) : null;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "wx-strip",
+    "aria-label": "\uC624\uB298 \uB0A0\uC9DC\uC640 \uB0A0\uC528"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wx-date"
+  }, /*#__PURE__*/React.createElement("strong", null, formatDate(today, 'md')), /*#__PURE__*/React.createElement("span", null, getDayName(today), "\uC694\uC77C")), wx?.icon && /*#__PURE__*/React.createElement("div", {
+    className: "wx-now"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "wx-icon",
+    "aria-hidden": "true"
+  }, wx.icon), /*#__PURE__*/React.createElement("strong", {
+    className: "num"
+  }, wx.temp, "\xB0"), /*#__PURE__*/React.createElement("span", null, wx.label)), wx?.pm10 && /*#__PURE__*/React.createElement("div", {
+    className: "wx-dusts"
+  }, dust('미세먼지', wx.pm10), dust('초미세먼지', wx.pm25)));
+}
 function Layout({
   pathname,
   children
@@ -1837,9 +2074,9 @@ function Layout({
     "aria-hidden": "true"
   }, currentNav.icon), /*#__PURE__*/React.createElement("div", {
     className: "header-titles"
-  }, isDashboard ? /*#__PURE__*/React.createElement("h2", {
-    className: "page-title"
-  }, formatDate(today, 'md'), " ", getDayName(today), "\uC694\uC77C") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+  }, isDashboard ? /*#__PURE__*/React.createElement(WeatherStrip, {
+    today: today
+  }) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
     className: "page-date"
   }, formatDate(today)), /*#__PURE__*/React.createElement("h2", {
     className: "page-title"
@@ -2051,6 +2288,37 @@ function normalizeLayout(saved) {
   // 겹치는 데가 없으면 저장한 그대로 보여줌(다시 정렬하면 새로고침 뒤 배치가 달라 보이던 문제)
   const overlaps = merged.some(a => merged.some(b => gridCollides(a, b)));
   return overlaps ? settleLayout(merged, null) : merged;
+}
+
+// 학습 관리 활동 종류 (체크: 했는지만 확인, 과제·수행평가: 상중하 평가)
+const ACTIVITY_TYPES = ['체크', '과제', '수행평가'];
+const typeClass = t => t === '체크' ? 'is-check' : t === '과제' ? '' : 'is-eval'; // 종류 없는 예전 항목은 수행평가로 표시해 왔음
+
+// 급식 검사 당번: 시작일에 1번, 그 뒤 평일(월~금)마다 번호순으로 한 명씩 돌아감. 토·일은 당번 없음
+// shortcut: 공휴일·방학도 평일로 세어 순서가 넘어감, 학교 일정까지 빼려면 NEIS 학사일정으로 셈
+const LUNCH_CHECK_START = '2026-11-18';
+function lunchChecker(students, date = new Date()) {
+  const list = [...(students || [])].sort((a, b) => Number(a.number) - Number(b.number));
+  const day = date.getDay();
+  if (!list.length || day === 0 || day === 6) return null;
+  const today = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  let n = 0;
+  for (const d = new Date(LUNCH_CHECK_START + 'T00:00:00'); d < today; d.setDate(d.getDate() + 1)) if (d.getDay() % 6 !== 0) n++;
+  return list[n % list.length];
+}
+{
+  // 11/18수 1번 → 19목 2번 → 20금 3번 → 22일 없음 → 23월 다시 1번
+  const abc = [{
+    number: 3,
+    name: 'C'
+  }, {
+    number: 1,
+    name: 'A'
+  }, {
+    number: 2,
+    name: 'B'
+  }];
+  console.assert(lunchChecker(abc, new Date(2026, 10, 18))?.name === 'A' && lunchChecker(abc, new Date(2026, 10, 20))?.name === 'C' && lunchChecker(abc, new Date(2026, 10, 22)) === null && lunchChecker(abc, new Date(2026, 10, 23))?.name === 'A', 'lunchChecker 순서가 틀려요');
 }
 function DashboardGrid({
   layout,
@@ -2273,7 +2541,7 @@ const PERIOD_SLOTS = {
   2: [590, 630],
   3: [650, 690],
   4: [700, 740],
-  5: [790, 830],
+  5: [750, 790],
   6: [840, 880]
 };
 const minToClock = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
@@ -2457,6 +2725,7 @@ function DashboardPage() {
   const totalPoints = students.reduce((sum, s) => sum + (s.points || 0), 0);
   const goalPoints = settings?.thermometerGoal || 1500;
   const lunchItems = lunchInfo ? lunchInfo.menu.split('\n').map(s => s.trim()).filter(Boolean) : [];
+  const checker = lunchChecker(students);
   const layout = useMemo(() => normalizeLayout(settings?.dashboardLayouts), [settings?.dashboardLayouts]);
   const saveLayout = next => updateSettings({
     dashboardLayouts: next.map(({
@@ -2592,7 +2861,9 @@ function DashboardPage() {
         className: "wcard-head"
       }, /*#__PURE__*/React.createElement("h2", {
         className: "wcard-title"
-      }, "\uC624\uB298\uC758 \uAE09\uC2DD"), lunchInfo?.calories && /*#__PURE__*/React.createElement("span", {
+      }, "\uC624\uB298\uC758 \uAE09\uC2DD"), checker && /*#__PURE__*/React.createElement("span", {
+        className: "lunch-check"
+      }, "\uAE09\uC2DD \uAC80\uC0AC: ", /*#__PURE__*/React.createElement("strong", null, checker.name)), lunchInfo?.calories && /*#__PURE__*/React.createElement("span", {
         className: "wcard-meta num"
       }, lunchInfo.calories)), /*#__PURE__*/React.createElement("div", {
         className: "wcard-body"
@@ -2765,9 +3036,13 @@ function DashboardPage() {
     className: "dash"
   }, /*#__PURE__*/React.createElement("div", {
     className: "dash-top"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "dash-headline-wrap"
   }, /*#__PURE__*/React.createElement("h1", {
     className: "dash-headline"
-  }, headline), isAdmin && /*#__PURE__*/React.createElement("div", {
+  }, headline), /*#__PURE__*/React.createElement(BreakTimer, {
+    schedule: holiday?.isHoliday ? [] : todaySchedule
+  })), isAdmin && /*#__PURE__*/React.createElement("div", {
     className: "dash-tools"
   }, editingLayout && /*#__PURE__*/React.createElement("button", {
     type: "button",
@@ -2888,10 +3163,14 @@ function StudentsPage() {
     students,
     isAdmin,
     studentRecords,
-    assignments,
+    assignments: rawAssignments,
     settings
   } = state;
+  // 최신 과제가 왼쪽 열에 먼저 (만든 날짜, 없으면 마감일 기준 / 같으면 나중에 추가한 것 먼저)
+  const assignments = useMemo(() => [...rawAssignments].reverse().sort((a, b) => String(b.createdAt || b.dueDate || '').slice(0, 10).localeCompare(String(a.createdAt || a.dueDate || '').slice(0, 10))), [rawAssignments]);
   const [activeTab, setActiveTab] = useState('list');
+  const [evalType, setEvalType] = useState('전체'); // 학습평가 표: 전체 / 체크 / 과제 / 수행평가
+  const evalCols = evalType === '전체' ? assignments : assignments.filter(a => (a.type || '수행평가') === evalType);
   useEffect(() => {
     if (!isAdmin) setActiveTab('list');
   }, [isAdmin]); // 학생 화면으로 바꾸면 선생님 전용 탭을 닫음
@@ -3503,21 +3782,30 @@ function StudentsPage() {
     }, s.aiSummary) : /*#__PURE__*/React.createElement("p", {
       className: "stu-bh-empty"
     }, "\uAE30\uB85D\uC744 \uBAA8\uC740 \uB4A4 \u201CAI \uC758\uACAC \uC4F0\uAE30\u201D\uB97C \uB204\uB974\uBA74 \uCD08\uC548\uC774 \uC0DD\uACA8\uC694.")));
-  })), activeTab === 'evaluation' && (assignments.length === 0 ? /*#__PURE__*/React.createElement("div", {
+  })), activeTab === 'evaluation' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "mode-switch stu-eval-filter",
+    role: "group",
+    "aria-label": "\uC885\uB958\uBCC4\uB85C \uBCF4\uAE30"
+  }, ['전체', ...ACTIVITY_TYPES].map(t => /*#__PURE__*/React.createElement("button", {
+    key: t,
+    type: "button",
+    "aria-pressed": evalType === t,
+    onClick: () => setEvalType(t)
+  }, t))), evalCols.length === 0 ? /*#__PURE__*/React.createElement("div", {
     className: "wcard wcard-empty stu-empty"
-  }, "\uB4F1\uB85D\uB41C \uACFC\uC81C\xB7\uC218\uD589\uD3C9\uAC00\uAC00 \uC5C6\uC5B4\uC694. \uD559\uC2B5 \uAD00\uB9AC\uC5D0\uC11C \uD65C\uB3D9\uC744 \uCD94\uAC00\uD574 \uC8FC\uC138\uC694.") : /*#__PURE__*/React.createElement("div", {
+  }, evalType === '전체' ? '등록된 체크·과제·수행평가가 없어요. 학습 관리에서 활동을 추가해 주세요.' : `등록된 ${evalType}가 없어요.`) : /*#__PURE__*/React.createElement("div", {
     className: "wk-card"
   }, /*#__PURE__*/React.createElement("table", {
     className: "stu-eval"
   }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
     className: "stu-eval-who"
-  }, "\uD559\uC0DD"), assignments.map(a => /*#__PURE__*/React.createElement("th", {
+  }, "\uD559\uC0DD"), evalCols.map(a => /*#__PURE__*/React.createElement("th", {
     key: a.id
   }, /*#__PURE__*/React.createElement("div", {
     className: "stu-eval-head"
   }, /*#__PURE__*/React.createElement("span", {
-    className: `lrn-type ${a.type === '수행평가' ? 'is-eval' : ''}`
-  }, a.type), isAdmin && /*#__PURE__*/React.createElement("button", {
+    className: `lrn-type ${typeClass(a.type)}`
+  }, a.type || '수행평가'), isAdmin && /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "icon-ghost",
     "aria-label": `${a.title} 삭제`,
@@ -3544,13 +3832,17 @@ function StudentsPage() {
     className: "stu-eval-who"
   }, /*#__PURE__*/React.createElement("span", {
     className: "att-no num"
-  }, s.number), s.name), assignments.map(a => {
+  }, s.number), s.name), evalCols.map(a => {
     const submission = a.submissions?.[s.id];
     const grade = submission?.grade;
     return /*#__PURE__*/React.createElement("td", {
       key: `${s.id}-${a.id}`,
       className: submission ? '' : 'is-missing'
-    }, submission ? isAdmin ? /*#__PURE__*/React.createElement("div", {
+    }, a.type === '체크' ? submission ? /*#__PURE__*/React.createElement("span", {
+      className: "stu-grade-chip"
+    }, "\u2713 \uC644\uB8CC") : /*#__PURE__*/React.createElement("span", {
+      className: "stu-missing"
+    }, "\uBBF8\uC644\uB8CC") : submission ? isAdmin ? /*#__PURE__*/React.createElement("div", {
       className: "stu-grade",
       role: "group",
       "aria-label": `${s.name} ${a.title} 평가`
@@ -3877,12 +4169,17 @@ function AttendancePage() {
   const [noteFor, setNoteFor] = useState(null);
   const [noteText, setNoteText] = useState('');
   const [noteReason, setNoteReason] = useState('');
-  // 월별 현황에서 고친 칸(저장 전): { 'YYYY-MM-DD': { 학생id: 상태 } }
+  // 월별 현황에서 고친 칸(저장 전): { 'YYYY-MM-DD': { 학생id: { status, note, reason } } }
   const [monthDraft, setMonthDraft] = useState({});
-  const monthChanges = Object.entries(monthDraft).flatMap(([d, recs]) => Object.entries(recs).filter(([id, st]) => (monthlyAttendance[d]?.[id]?.status || null) !== st).map(([id, st]) => ({
+  const [monthNoteFor, setMonthNoteFor] = useState(null); // { date, id } — 월별 현황에서 사유 입력 중인 칸
+  const monthRec = (d, id) => monthDraft[d]?.[id] || monthlyAttendance[d]?.[id] || null;
+  const monthChanges = Object.entries(monthDraft).flatMap(([d, recs]) => Object.entries(recs).filter(([id, r]) => {
+    const saved = monthlyAttendance[d]?.[id];
+    return !saved || !sameAtt(saved, r);
+  }).map(([id, r]) => ({
     date: d,
     id,
-    status: st
+    ...r
   })));
   const monthDirty = monthChanges.length > 0;
   const baseOf = id => attendance[id] || {
@@ -3933,29 +4230,68 @@ function AttendancePage() {
       showToast('선생님 모드에서만 수정할 수 있습니다.', 'error');
       return;
     }
+    const old = monthRec(date, studentId) || {};
+    const absent = status !== 'present';
     setMonthDraft(prev => ({
       ...prev,
       [date]: {
         ...(prev[date] || {}),
-        [studentId]: status
+        [studentId]: {
+          status,
+          note: absent ? old.note || '' : '',
+          reason: absent ? old.reason || '' : ''
+        }
       }
     }));
     setMonthlyActiveCell(null);
+  };
+  const openMonthNote = (date, id) => {
+    const r = monthRec(date, id) || {};
+    setNoteText(r.note || '');
+    setNoteReason(r.reason || '');
+    setMonthNoteFor({
+      date,
+      id
+    });
+    setMonthlyActiveCell(null);
+  };
+  const saveMonthNote = () => {
+    const {
+      date,
+      id
+    } = monthNoteFor;
+    const r = monthRec(date, id) || {
+      status: 'present'
+    };
+    setMonthDraft(prev => ({
+      ...prev,
+      [date]: {
+        ...(prev[date] || {}),
+        [id]: {
+          status: r.status,
+          note: noteText.trim(),
+          reason: noteReason
+        }
+      }
+    }));
+    setMonthNoteFor(null);
   };
   const saveMonth = () => {
     const byDate = {};
     monthChanges.forEach(({
       date,
       id,
-      status
+      status,
+      note,
+      reason
     }) => {
       const old = monthlyAttendance[date]?.[id] || {};
       const absent = status !== 'present';
       (byDate[date] = byDate[date] || {})[id] = {
         ...old,
         status,
-        note: absent ? old.note || '' : '',
-        reason: absent ? old.reason || '' : ''
+        note: absent ? note || '' : '',
+        reason: absent ? reason || '' : ''
       };
     });
     Object.entries(byDate).forEach(([date, records]) => saveAttendanceDay(date, records));
@@ -4084,6 +4420,7 @@ function AttendancePage() {
     onClick: () => {
       if (viewMode === 'daily' || !confirmLeaveMonth()) return;
       setMonthDraft({});
+      setMonthNoteFor(null);
       setMonthlyActiveCell(null);
       setViewMode('daily');
     }
@@ -4316,11 +4653,12 @@ function AttendancePage() {
   }, s.number), /*#__PURE__*/React.createElement("td", {
     className: "sticky-col-name"
   }, s.name), monthDays.map(d => {
-    const record = monthlyAttendance[d]?.[s.id];
-    const saved = record?.status || null;
+    const savedRec = monthlyAttendance[d]?.[s.id];
+    const record = monthRec(d, s.id);
+    const saved = savedRec?.status || null;
     const pending = monthDraft[d]?.[s.id];
-    const status = pending || saved;
-    const isChanged = !!pending && pending !== saved;
+    const status = record?.status || null;
+    const isChanged = !!pending && (!savedRec || !sameAtt(savedRec, pending));
     const isCellActive = monthlyActiveCell?.studentId === s.id && monthlyActiveCell?.date === d;
     return /*#__PURE__*/React.createElement("td", {
       key: d,
@@ -4338,9 +4676,9 @@ function AttendancePage() {
       }
     }, /*#__PURE__*/React.createElement("span", {
       className: `monthly-status ${status || 'no-data'}`
-    }, status ? STATUS_MAP[status].mark : '-'), record?.note && /*#__PURE__*/React.createElement("span", {
+    }, status ? STATUS_MAP[status].mark : '-'), (record?.note || record?.reason) && status && status !== 'present' && /*#__PURE__*/React.createElement("span", {
       className: "monthly-note-dot",
-      "aria-label": `사유: ${record.note}`
+      "aria-label": `사유: ${[record.reason, record.note].filter(Boolean).join(' ')}`
     }), isAdmin && isCellActive && /*#__PURE__*/React.createElement("div", {
       className: "attendance-status-selector show monthly-selector",
       onClick: e => e.stopPropagation()
@@ -4349,7 +4687,11 @@ function AttendancePage() {
       type: "button",
       className: `status-option ${status === k ? 'active' : ''}`,
       onClick: () => handleMonthlyStatus(s.id, d, k)
-    }, STATUS_MAP[k].label))));
+    }, STATUS_MAP[k].label)), status && status !== 'present' && /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "status-option monthly-note-btn",
+      onClick: () => openMonthNote(d, s.id)
+    }, "\u270E \uC0AC\uC720 \uC785\uB825")));
   })))))), isAdmin && /*#__PURE__*/React.createElement("div", {
     className: `att-submit ${monthDirty ? 'is-dirty' : ''}`
   }, /*#__PURE__*/React.createElement("span", {
@@ -4367,7 +4709,71 @@ function AttendancePage() {
     className: "btn btn-primary",
     onClick: saveMonth,
     disabled: !monthDirty
-  }, "\uC800\uC7A5"))), /*#__PURE__*/React.createElement(NeisSummary, {
+  }, "\uC800\uC7A5"))), monthNoteFor && (() => {
+    const ns = students.find(x => x.id === monthNoteFor.id);
+    const r = monthRec(monthNoteFor.date, monthNoteFor.id);
+    if (!ns || !r) return null;
+    return /*#__PURE__*/React.createElement("div", _extends({
+      className: "modal-overlay"
+    }, overlayClose(() => setMonthNoteFor(null))), /*#__PURE__*/React.createElement("div", {
+      className: "modal-content att-note-modal",
+      role: "dialog",
+      "aria-modal": "true",
+      "aria-labelledby": "att-mnote-title",
+      onClick: e => e.stopPropagation()
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "modal-header"
+    }, /*#__PURE__*/React.createElement("h3", {
+      id: "att-mnote-title"
+    }, ns.name, " \xB7 ", +monthNoteFor.date.slice(5, 7), "/", +monthNoteFor.date.slice(8), " ", STATUS_MAP[r.status].label, " \uC0AC\uC720"), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "close-btn",
+      "aria-label": "\uB2EB\uAE30",
+      onClick: () => setMonthNoteFor(null)
+    }, "\xD7")), /*#__PURE__*/React.createElement("div", {
+      className: "modal-body"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "att-reason-label",
+      id: "att-mreason-label"
+    }, "NEIS \uAD6C\uBD84"), /*#__PURE__*/React.createElement("div", {
+      className: "mode-switch att-reason-pick",
+      role: "group",
+      "aria-labelledby": "att-mreason-label"
+    }, ATT_REASONS.map(x => /*#__PURE__*/React.createElement("button", {
+      key: x,
+      type: "button",
+      "aria-pressed": noteReason === x,
+      onClick: () => setNoteReason(x)
+    }, x))), /*#__PURE__*/React.createElement("label", {
+      htmlFor: "att-mnote-text",
+      className: "att-reason-label"
+    }, "\uC0AC\uC720 (\uD2B9\uAE30\uC0AC\uD56D)"), /*#__PURE__*/React.createElement("textarea", {
+      id: "att-mnote-text",
+      className: "form-input",
+      rows: "3",
+      autoFocus: true,
+      placeholder: "\uC608: \uAC10\uAE30\uB85C \uBCD1\uC6D0 \uC9C4\uB8CC",
+      value: noteText,
+      onChange: e => setNoteText(e.target.value)
+    }), /*#__PURE__*/React.createElement("div", {
+      className: "att-note-presets"
+    }, ['질병', '병원 진료', '가정 사정', '체험학습', '늦잠'].map(p => /*#__PURE__*/React.createElement("button", {
+      key: p,
+      type: "button",
+      className: "chip-btn",
+      onClick: () => setNoteText(p)
+    }, p)))), /*#__PURE__*/React.createElement("div", {
+      className: "modal-footer att-note-footer"
+    }, /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "btn btn-secondary",
+      onClick: () => setMonthNoteFor(null)
+    }, "\uCDE8\uC18C"), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "btn btn-primary",
+      onClick: saveMonthNote
+    }, "\uD655\uC778"))));
+  })(), /*#__PURE__*/React.createElement(NeisSummary, {
     students: students,
     monthlyAttendance: monthlyAttendance,
     monthDays: monthDays,
@@ -4589,7 +4995,7 @@ function LearningPage() {
   }, /*#__PURE__*/React.createElement("h1", {
     className: "dash-headline"
   }, activeActivity ? /*#__PURE__*/React.createElement(React.Fragment, null, activeActivity.title) : '오늘 할 활동을 정해요'), activeActivity && /*#__PURE__*/React.createElement("span", {
-    className: `lrn-type ${activeActivity.type === '수행평가' ? 'is-eval' : ''}`
+    className: `lrn-type ${typeClass(activeActivity.type)}`
   }, activeActivity.type || '수행평가'), selectedAssignment && /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "chip-btn",
@@ -4614,7 +5020,7 @@ function LearningPage() {
     className: "mode-switch",
     role: "group",
     "aria-label": "\uC885\uB958"
-  }, ['과제', '수행평가'].map(t => /*#__PURE__*/React.createElement("button", {
+  }, ACTIVITY_TYPES.map(t => /*#__PURE__*/React.createElement("button", {
     key: t,
     type: "button",
     "aria-pressed": tempActivityType === t,
@@ -4724,7 +5130,7 @@ function LearningPage() {
       "aria-expanded": isOpen,
       onClick: () => setSelectedAssignment(isOpen ? null : a.id)
     }, /*#__PURE__*/React.createElement("span", {
-      className: `lrn-type ${a.type === '수행평가' ? 'is-eval' : ''}`
+      className: `lrn-type ${typeClass(a.type)}`
     }, a.type), /*#__PURE__*/React.createElement("span", {
       className: "lrn-row-text"
     }, /*#__PURE__*/React.createElement("span", {
@@ -6017,6 +6423,7 @@ function StudentApp() {
   const act = data?.canCheck ? data.activity : null;
   const pastActs = data?.canCheck ? (data.activities || []).slice(1) : [];
   const roster = data?.roster || [];
+  const checker = lunchChecker(roster); // 명단은 교실 서버에서만 와서 Vercel 학생 화면에는 안 나옴
   const doneOf = a => new Set([...(a?.done || []), ...(a ? Object.keys(sentDone[a.id] || {}) : [])]);
   const setMsgFor = (id, m) => setActMsg(prev => ({
     ...prev,
@@ -6199,11 +6606,13 @@ function StudentApp() {
     className: "stu-who"
   }, /*#__PURE__*/React.createElement("strong", null, label.school), /*#__PURE__*/React.createElement("span", null, label.klass, " \xB7 ", label.teacher))), /*#__PURE__*/React.createElement("div", {
     className: "stu-hero"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "page-date"
-  }, now.getMonth() + 1, "\uC6D4 ", now.getDate(), "\uC77C ", dayName, "\uC694\uC77C"), /*#__PURE__*/React.createElement("h1", {
+  }, /*#__PURE__*/React.createElement(WeatherStrip, {
+    today: now
+  }), /*#__PURE__*/React.createElement("h1", {
     className: "dash-headline"
-  }, headline)), problem && !data && /*#__PURE__*/React.createElement("div", {
+  }, headline), /*#__PURE__*/React.createElement(BreakTimer, {
+    schedule: today
+  })), problem && !data && /*#__PURE__*/React.createElement("div", {
     className: "stu-msg"
   }, problem), /*#__PURE__*/React.createElement("nav", {
     className: "stu-tabs",
@@ -6238,7 +6647,7 @@ function StudentApp() {
   }, /*#__PURE__*/React.createElement("div", {
     className: "stu-act-title"
   }, /*#__PURE__*/React.createElement("span", {
-    className: `lrn-type ${act.type === '수행평가' ? 'is-eval' : ''}`
+    className: `lrn-type ${typeClass(act.type)}`
   }, act.type), /*#__PURE__*/React.createElement("strong", null, act.title)), renderActBody(act))), tab === 'act' && pastActs.length > 0 && /*#__PURE__*/React.createElement("section", {
     className: "wcard stu-past",
     "aria-label": "\uC9C0\uB09C \uD65C\uB3D9"
@@ -6270,7 +6679,7 @@ function StudentApp() {
         setOpenPast(isOpen ? null : a.id);
       }
     }, /*#__PURE__*/React.createElement("span", {
-      className: `lrn-type ${a.type === '수행평가' ? 'is-eval' : ''}`
+      className: `lrn-type ${typeClass(a.type)}`
     }, a.type), /*#__PURE__*/React.createElement("span", {
       className: "stu-past-text"
     }, /*#__PURE__*/React.createElement("strong", null, a.title), /*#__PURE__*/React.createElement("span", {
@@ -6393,7 +6802,9 @@ function StudentApp() {
     className: "wcard-head"
   }, /*#__PURE__*/React.createElement("h2", {
     className: "wcard-title"
-  }, "\uC624\uB298\uC758 \uAE09\uC2DD"), lunch?.calories && /*#__PURE__*/React.createElement("span", {
+  }, "\uC624\uB298\uC758 \uAE09\uC2DD"), checker && /*#__PURE__*/React.createElement("span", {
+    className: "lunch-check"
+  }, "\uAE09\uC2DD \uAC80\uC0AC: ", /*#__PURE__*/React.createElement("strong", null, checker.name)), lunch?.calories && /*#__PURE__*/React.createElement("span", {
     className: "wcard-meta num"
   }, lunch.calories)), /*#__PURE__*/React.createElement("div", {
     className: "wcard-body"

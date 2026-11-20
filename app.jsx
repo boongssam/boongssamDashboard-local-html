@@ -4,6 +4,7 @@ const {
   getCurrentPeriod, shuffleArray, generateUUID, getWeekStart, toISODate, normalizeBirthday, upcomingAutoDays,
 } = window.Helpers;
 const { fetchTodayLunch, fetchSchoolHoliday } = window.NeisApi;
+const { fetchWeather } = window.WeatherApi;
 const { generateBehaviorSummary } = window.GeminiApi;
 const { extractCalendarId, fetchCalendarEvents, placeEventsInWeek } = window.GoogleCalApi;
 const { downloadStudentTemplate, parseStudentExcel } = window.ExcelApi;
@@ -520,6 +521,7 @@ function Toast() {
    =================================================================== */
 const ICON_PATHS = {
   dashboard: <><rect x="3" y="3" width="7" height="9" rx="1.5" /><rect x="14" y="3" width="7" height="5" rx="1.5" /><rect x="14" y="12" width="7" height="9" rx="1.5" /><rect x="3" y="16" width="7" height="5" rx="1.5" /></>,
+  clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
   weekly: <path d="M4 6h16M4 12h16M4 18h10" />,
   attendance: <><rect x="4" y="4" width="16" height="17" rx="2" /><path d="M9 2.5v3M15 2.5v3M8.5 13l2.5 2.5 4.5-5" /></>,
   learning: <><path d="M4 5.5C4 4.7 4.7 4 5.5 4H11v16H5.5c-.8 0-1.5-.7-1.5-1.5z" /><path d="M20 5.5c0-.8-.7-1.5-1.5-1.5H13v16h5.5c.8 0 1.5-.7 1.5-1.5z" /></>,
@@ -704,6 +706,117 @@ const WIDGET_TONES = { schedule: 'apricot', thermometer: 'carrot', lunch: 'cocoa
 const PAGE_TITLES = { '/': '대시보드', '/weekly': '주간 일정', '/attendance': '출석 관리', '/learning': '학습 관리', '/calendar': '일정 & 공지', '/tools': '학급 도구', '/links': '바로가기', '/students': '학생 관리' };
 const MOBILE_LABELS = { '/': '대시보드', '/weekly': '주간', '/attendance': '출석', '/learning': '학습', '/calendar': '일정', '/tools': '도구', '/links': '링크', '/students': '학생' };
 
+// 쉬는 시간 안내: 수업과 수업 사이에 "쉬는 시간이 N분 남았어요"를 보여주고, 누르면 전체화면 타이머가 열림
+function BreakTimer({ schedule }) {
+  const [tick, setTick] = useState(() => Date.now());
+  const [full, setFull] = useState(null); // { from, to, nextLabel } (초 단위, 자정부터)
+  const boxRef = useRef(null);
+  const [showTime, setShowTime] = useState(false); // 수업 중에는 기본으로 남은 시간을 숨김
+  useEffect(() => {
+    const t = setInterval(() => setTick(Date.now()), full ? 250 : 10000);
+    return () => clearInterval(t);
+  }, [!!full]);
+  const secOf = (ms) => { const d = new Date(ms); return d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds() + d.getMilliseconds() / 1000; };
+  const nowSec = secOf(tick), nowMin = Math.floor(nowSec / 60);
+  const cur = schedule.find(c => nowMin >= c.start && nowMin <= c.end);
+  const inClass = !!cur;
+  const next = schedule.find(c => c.start > nowMin);
+  const prev = [...schedule].reverse().find(c => c.end < nowMin);
+  const onBreak = !inClass && next && prev;
+
+  const close = useCallback(() => {
+    setFull(null);
+    try { if (document.fullscreenElement) document.exitFullscreen(); } catch {}
+  }, []);
+  useEffect(() => {
+    if (!full) return;
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    const onFs = () => { if (!document.fullscreenElement) setFull(null); };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('fullscreenchange', onFs);
+    return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('fullscreenchange', onFs); };
+  }, [full, close]);
+  // 시간이 다 되면 짧은 알림음 (브라우저가 막으면 조용히 넘어감)
+  const left = full ? Math.max(0, full.to - nowSec) : 0;
+  const beeped = useRef(false);
+  useEffect(() => {
+    if (!full) { beeped.current = false; return; }
+    if (left <= 0 && !beeped.current && full.kind !== 'class') {
+      beeped.current = true;
+      try {
+        const Ctx = window.AudioContext || window.webkitAudioContext; const ctx = new Ctx();
+        [0, 0.35, 0.7].forEach(t => { const o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.value = 880; g.gain.value = 0.15; o.connect(g); g.connect(ctx.destination); o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.2); });
+      } catch {}
+    }
+  }, [full, left <= 0]);
+
+  const open = () => {
+    setShowTime(false);
+    if (cur) setFull({ kind: 'class', clock: `${minToClock(cur.start)}–${minToClock(cur.end)}`, from: cur.start * 60, to: cur.end * 60, title: `${cur.period}교시 ${cur.subject}`, content: cur.content || '', nextLabel: next ? `${next.period}교시 ${next.subject}` : '', nextTime: next ? `${minToClock(next.start)}–${minToClock(next.end)}` : '' });
+    else setFull({ kind: 'break', from: prev.end * 60, to: next.start * 60, nextLabel: `${next.period}교시 ${next.subject}`, nextTime: `${minToClock(next.start)}–${minToClock(next.end)}` });
+    setTimeout(() => { try { boxRef.current?.requestFullscreen?.(); } catch {} }, 0);
+  };
+
+  const classMins = cur ? Math.max(1, Math.ceil((cur.end * 60 - nowSec) / 60)) : 0;
+  const mins = onBreak ? Math.max(1, Math.ceil((next.start * 60 - nowSec) / 60)) : 0;
+  const mm = String(Math.floor(Math.ceil(left) / 60)).padStart(2, '0'), ss = String(Math.ceil(left) % 60).padStart(2, '0');
+  const total = full ? Math.max(1, full.to - full.from) : 1;
+  const pct = full ? Math.min(100, Math.max(0, ((nowSec - full.from) / total) * 100)) : 0;
+
+  return (
+    <>
+      {cur && <button type="button" className="brk-chip is-class" onClick={open}><Icon name="clock" size={16} /><strong>{cur.period}교시 {cur.subject}</strong> 학습 안내<span className="brk-chip-hint">눌러서 크게 보기</span></button>}
+      {onBreak && <button type="button" className="brk-chip" onClick={open}><Icon name="clock" size={16} />쉬는 시간이 <strong className="num">{mins}분</strong> 남았어요<span className="brk-chip-hint">눌러서 타이머 크게 보기</span></button>}
+      {full && (
+        <div className="brk-full" ref={boxRef} role="dialog" aria-modal="true" aria-label={full.kind === 'class' ? '수업 안내' : '쉬는 시간 타이머'} onClick={close}>
+          {full.kind === 'class' ? (
+            <div className="brk-full-inner" onClick={e => e.stopPropagation()}>
+              <p className="brk-full-label">지금은</p>
+              <h2 className="brk-full-title">{full.title}</h2>
+              {full.content ? <p className="brk-full-content">{full.content}</p> : <p className="brk-full-content is-empty">주간 일정에 학습 내용을 적으면 여기에 크게 보여요.</p>}
+              <div className="brk-full-quiet">
+                {showTime
+                  ? <span>{full.clock} · 약 <strong className="num">{Math.max(0, Math.ceil(left / 60))}분</strong> 남음</span>
+                  : <span>{full.clock}</span>}
+                <button type="button" onClick={() => setShowTime(v => !v)}>{showTime ? '남은 시간 숨기기' : '남은 시간 보기'}</button>
+              </div>
+            </div>
+          ) : (
+            <div className="brk-full-inner" onClick={e => e.stopPropagation()}>
+              <p className="brk-full-label">{left > 0 ? '쉬는 시간' : '수업 시간이에요'}</p>
+              <div className={`brk-full-time num ${left <= 0 ? 'is-over' : left <= 60 ? 'is-soon' : ''}`}>{left > 0 ? `${mm}:${ss}` : '00:00'}</div>
+              <div className="brk-full-track" aria-hidden="true"><span style={{ width: `${pct}%` }} /></div>
+              {full.nextLabel && <p className="brk-full-next">다음 수업 <strong>{full.nextLabel}</strong> <span className="num">{full.nextTime}</span></p>}
+            </div>
+          )}
+          <button type="button" className="brk-full-close" onClick={close}>닫기 (Esc)</button>
+        </div>
+      )}
+    </>
+  );
+}
+
+// 대시보드 위쪽: 오늘 날짜 · 요일 · 날씨/기온 · 미세먼지/초미세먼지 (1시간마다 새로 불러옴)
+function WeatherStrip({ today }) {
+  // 마지막으로 받은 값을 기억해 두었다가 바로 보여주고, 뒤에서 새로 불러와 갈아끼움 (1시간 넘은 값은 안 씀)
+  const [wx, setWx] = useState(() => { try { const c = JSON.parse(localStorage.getItem('wxCache') || 'null'); return c && Date.now() - c.at < 60 * 60 * 1000 ? c.data : null; } catch { return null; } });
+  useEffect(() => {
+    let alive = true;
+    const load = () => fetchWeather().then(r => { if (alive && r) { setWx(r); try { localStorage.setItem('wxCache', JSON.stringify({ at: Date.now(), data: r })); } catch {} } }).catch(() => {});
+    load();
+    const t = setInterval(load, 60 * 60 * 1000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+  const dust = (name, d) => d ? <span className={`wx-dust is-l${d.level}`}><span className="wx-dust-name">{name}</span><strong>{d.label}</strong><span className="num wx-dust-val">{d.value}㎍</span></span> : null;
+  return (
+    <div className="wx-strip" aria-label="오늘 날짜와 날씨">
+      <div className="wx-date"><strong>{formatDate(today, 'md')}</strong><span>{getDayName(today)}요일</span></div>
+      {wx?.icon && <div className="wx-now"><span className="wx-icon" aria-hidden="true">{wx.icon}</span><strong className="num">{wx.temp}°</strong><span>{wx.label}</span></div>}
+      {wx?.pm10 && <div className="wx-dusts">{dust('미세먼지', wx.pm10)}{dust('초미세먼지', wx.pm25)}</div>}
+    </div>
+  );
+}
+
 function Layout({ pathname, children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -800,7 +913,7 @@ function Layout({ pathname, children }) {
             {!isDashboard && currentNav && <span className="page-icon" aria-hidden="true">{currentNav.icon}</span>}
             <div className="header-titles">
               {isDashboard
-                ? <h2 className="page-title">{formatDate(today, 'md')} {getDayName(today)}요일</h2>
+                ? <WeatherStrip today={today} />
                 : <><span className="page-date">{formatDate(today)}</span><h2 className="page-title">{pageTitle}</h2></>}
             </div>
             <div className="header-actions">
@@ -903,6 +1016,28 @@ function normalizeLayout(saved) {
   // 겹치는 데가 없으면 저장한 그대로 보여줌(다시 정렬하면 새로고침 뒤 배치가 달라 보이던 문제)
   const overlaps = merged.some(a => merged.some(b => gridCollides(a, b)));
   return overlaps ? settleLayout(merged, null) : merged;
+}
+
+// 학습 관리 활동 종류 (체크: 했는지만 확인, 과제·수행평가: 상중하 평가)
+const ACTIVITY_TYPES = ['체크', '과제', '수행평가'];
+const typeClass = (t) => (t === '체크' ? 'is-check' : t === '과제' ? '' : 'is-eval'); // 종류 없는 예전 항목은 수행평가로 표시해 왔음
+
+// 급식 검사 당번: 시작일에 1번, 그 뒤 평일(월~금)마다 번호순으로 한 명씩 돌아감. 토·일은 당번 없음
+// shortcut: 공휴일·방학도 평일로 세어 순서가 넘어감, 학교 일정까지 빼려면 NEIS 학사일정으로 셈
+const LUNCH_CHECK_START = '2026-11-18';
+function lunchChecker(students, date = new Date()) {
+  const list = [...(students || [])].sort((a, b) => Number(a.number) - Number(b.number));
+  const day = date.getDay();
+  if (!list.length || day === 0 || day === 6) return null;
+  const today = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  let n = 0;
+  for (const d = new Date(LUNCH_CHECK_START + 'T00:00:00'); d < today; d.setDate(d.getDate() + 1)) if (d.getDay() % 6 !== 0) n++;
+  return list[n % list.length];
+}
+{ // 11/18수 1번 → 19목 2번 → 20금 3번 → 22일 없음 → 23월 다시 1번
+  const abc = [{ number: 3, name: 'C' }, { number: 1, name: 'A' }, { number: 2, name: 'B' }];
+  console.assert(lunchChecker(abc, new Date(2026, 10, 18))?.name === 'A' && lunchChecker(abc, new Date(2026, 10, 20))?.name === 'C'
+    && lunchChecker(abc, new Date(2026, 10, 22)) === null && lunchChecker(abc, new Date(2026, 10, 23))?.name === 'A', 'lunchChecker 순서가 틀려요');
 }
 
 function DashboardGrid({ layout, editing, onChange, widgets }) {
@@ -1033,7 +1168,7 @@ function DashboardGrid({ layout, editing, onChange, widgets }) {
 /* ===================================================================
    DashboardPage
    =================================================================== */
-const PERIOD_SLOTS = { 1: [540, 580], 2: [590, 630], 3: [650, 690], 4: [700, 740], 5: [790, 830], 6: [840, 880] };
+const PERIOD_SLOTS = { 1: [540, 580], 2: [590, 630], 3: [650, 690], 4: [700, 740], 5: [750, 790], 6: [840, 880] };
 const minToClock = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
 function DashboardPage() {
@@ -1122,6 +1257,7 @@ function DashboardPage() {
   const totalPoints = students.reduce((sum, s) => sum + (s.points || 0), 0);
   const goalPoints = settings?.thermometerGoal || 1500;
   const lunchItems = lunchInfo ? lunchInfo.menu.split('\n').map(s => s.trim()).filter(Boolean) : [];
+  const checker = lunchChecker(students);
 
   const layout = useMemo(() => normalizeLayout(settings?.dashboardLayouts), [settings?.dashboardLayouts]);
   const saveLayout = (next) => updateSettings({ dashboardLayouts: next.map(({ id, x, y, w, h }) => ({ id, x, y, w, h })) });
@@ -1191,7 +1327,7 @@ function DashboardPage() {
     lunch: {
       label: '오늘의 급식',
       content: (<>
-        <div className="wcard-head"><h2 className="wcard-title">오늘의 급식</h2>{lunchInfo?.calories && <span className="wcard-meta num">{lunchInfo.calories}</span>}</div>
+        <div className="wcard-head"><h2 className="wcard-title">오늘의 급식</h2>{checker && <span className="lunch-check">급식 검사: <strong>{checker.name}</strong></span>}{lunchInfo?.calories && <span className="wcard-meta num">{lunchInfo.calories}</span>}</div>
         <div className="wcard-body">
           {isLoadingLunch ? <div className="wcard-empty">식단표를 불러오는 중이에요…</div>
             : lunchItems.length ? <ul className="lunch-list">{lunchItems.map((m, i) => <li key={i}>{m}</li>)}</ul>
@@ -1283,7 +1419,7 @@ function DashboardPage() {
   return (
     <div className="dash">
       <div className="dash-top">
-        <h1 className="dash-headline">{headline}</h1>
+        <div className="dash-headline-wrap"><h1 className="dash-headline">{headline}</h1><BreakTimer schedule={holiday?.isHoliday ? [] : todaySchedule} /></div>
         {isAdmin && (
           <div className="dash-tools">
             {editingLayout && <button type="button" className="btn btn-secondary btn-sm" onClick={resetLayout}>기본 배치로</button>}
@@ -1331,8 +1467,11 @@ function DashboardPage() {
    =================================================================== */
 function StudentsPage() {
   const { state, dispatch, showToast, updatePoints, resetPoints, updateStudent, bulkUpdateStudents, addStudentRecord, deleteStudentRecord } = useApp();
-  const { students, isAdmin, studentRecords, assignments, settings } = state;
-  const [activeTab, setActiveTab] = useState('list');
+  const { students, isAdmin, studentRecords, assignments: rawAssignments, settings } = state;
+  // 최신 과제가 왼쪽 열에 먼저 (만든 날짜, 없으면 마감일 기준 / 같으면 나중에 추가한 것 먼저)
+  const assignments = useMemo(() => [...rawAssignments].reverse().sort((a, b) => String(b.createdAt || b.dueDate || '').slice(0, 10).localeCompare(String(a.createdAt || a.dueDate || '').slice(0, 10))), [rawAssignments]);  const [activeTab, setActiveTab] = useState('list');
+  const [evalType, setEvalType] = useState('전체'); // 학습평가 표: 전체 / 체크 / 과제 / 수행평가
+  const evalCols = evalType === '전체' ? assignments : assignments.filter(a => (a.type || '수행평가') === evalType);
   useEffect(() => { if (!isAdmin) setActiveTab('list'); }, [isAdmin]); // 학생 화면으로 바꾸면 선생님 전용 탭을 닫음
   const [search, setSearch] = useState('');
   const [view, setView] = useState('card');
@@ -1653,16 +1792,19 @@ function StudentsPage() {
         </ul>
       )}
 
-      {activeTab === 'evaluation' && (
-        assignments.length === 0 ? (<div className="wcard wcard-empty stu-empty">등록된 과제·수행평가가 없어요. 학습 관리에서 활동을 추가해 주세요.</div>) : (
+      {activeTab === 'evaluation' && (<>
+        <div className="mode-switch stu-eval-filter" role="group" aria-label="종류별로 보기">
+          {['전체', ...ACTIVITY_TYPES].map(t => <button key={t} type="button" aria-pressed={evalType === t} onClick={() => setEvalType(t)}>{t}</button>)}
+        </div>
+        {evalCols.length === 0 ? (<div className="wcard wcard-empty stu-empty">{evalType === '전체' ? '등록된 체크·과제·수행평가가 없어요. 학습 관리에서 활동을 추가해 주세요.' : `등록된 ${evalType}가 없어요.`}</div>) : (
           <div className="wk-card">
             <table className="stu-eval">
               <thead><tr>
                 <th className="stu-eval-who">학생</th>
-                {assignments.map(a => (
+                {evalCols.map(a => (
                   <th key={a.id}>
                     <div className="stu-eval-head">
-                      <span className={`lrn-type ${a.type === '수행평가' ? 'is-eval' : ''}`}>{a.type}</span>
+                      <span className={`lrn-type ${typeClass(a.type)}`}>{a.type || '수행평가'}</span>
                       {isAdmin && <button type="button" className="icon-ghost" aria-label={`${a.title} 삭제`} onClick={() => { if (confirm('이 항목을 정말 삭제하시겠습니까?')) { dispatch({ type: 'DELETE_ASSIGNMENT', payload: a.id }); showToast('삭제되었습니다.', 'success'); } }}><Icon name="trash" size={16} /></button>}
                     </div>
                     <div className="stu-eval-title">{a.title}</div>
@@ -1674,12 +1816,13 @@ function StudentsPage() {
                 {students.map(s => (
                   <tr key={s.id}>
                     <th scope="row" className="stu-eval-who"><span className="att-no num">{s.number}</span>{s.name}</th>
-                    {assignments.map(a => {
+                    {evalCols.map(a => {
                       const submission = a.submissions?.[s.id];
                       const grade = submission?.grade;
                       return (
                         <td key={`${s.id}-${a.id}`} className={submission ? '' : 'is-missing'}>
-                          {submission ? (isAdmin ? (
+                          {a.type === '체크' ? (submission ? <span className="stu-grade-chip">✓ 완료</span> : <span className="stu-missing">미완료</span>)
+                          : submission ? (isAdmin ? (
                             <div className="stu-grade" role="group" aria-label={`${s.name} ${a.title} 평가`}>
                               {['상', '중', '하'].map(g => (<button key={g} type="button" aria-pressed={grade === g} onClick={() => handleEvaluate(a.id, s.id, g)}>{g}</button>))}
                             </div>
@@ -1693,8 +1836,8 @@ function StudentsPage() {
               </tbody>
             </table>
           </div>
-        )
-      )}
+        )}
+      </>)}
 
       {selectedStudent && (
         <div className="modal-overlay" {...overlayClose(() => { setSelectedStudent(null); setIsEditingName(false); })}>
@@ -1804,9 +1947,11 @@ function AttendancePage() {
   const [noteFor, setNoteFor] = useState(null);
   const [noteText, setNoteText] = useState('');
   const [noteReason, setNoteReason] = useState('');
-  // 월별 현황에서 고친 칸(저장 전): { 'YYYY-MM-DD': { 학생id: 상태 } }
+  // 월별 현황에서 고친 칸(저장 전): { 'YYYY-MM-DD': { 학생id: { status, note, reason } } }
   const [monthDraft, setMonthDraft] = useState({});
-  const monthChanges = Object.entries(monthDraft).flatMap(([d, recs]) => Object.entries(recs).filter(([id, st]) => (monthlyAttendance[d]?.[id]?.status || null) !== st).map(([id, st]) => ({ date: d, id, status: st })));
+  const [monthNoteFor, setMonthNoteFor] = useState(null); // { date, id } — 월별 현황에서 사유 입력 중인 칸
+  const monthRec = (d, id) => monthDraft[d]?.[id] || monthlyAttendance[d]?.[id] || null;
+  const monthChanges = Object.entries(monthDraft).flatMap(([d, recs]) => Object.entries(recs).filter(([id, r]) => { const saved = monthlyAttendance[d]?.[id]; return !saved || !sameAtt(saved, r); }).map(([id, r]) => ({ date: d, id, ...r })));
   const monthDirty = monthChanges.length > 0;
 
   const baseOf = (id) => attendance[id] || { status: 'present', note: '' };
@@ -1839,15 +1984,23 @@ function AttendancePage() {
   // 칸을 고르면 표시만 바뀌고, 아래 '저장'을 눌러야 db에 들어감
   const handleMonthlyStatus = (studentId, date, status) => {
     if (!isAdmin) { showToast('선생님 모드에서만 수정할 수 있습니다.', 'error'); return; }
-    setMonthDraft(prev => ({ ...prev, [date]: { ...(prev[date] || {}), [studentId]: status } }));
+    const old = monthRec(date, studentId) || {};
+    const absent = status !== 'present';
+    setMonthDraft(prev => ({ ...prev, [date]: { ...(prev[date] || {}), [studentId]: { status, note: absent ? (old.note || '') : '', reason: absent ? (old.reason || '') : '' } } }));
     setMonthlyActiveCell(null);
+  };
+  const openMonthNote = (date, id) => { const r = monthRec(date, id) || {}; setNoteText(r.note || ''); setNoteReason(r.reason || ''); setMonthNoteFor({ date, id }); setMonthlyActiveCell(null); };
+  const saveMonthNote = () => {
+    const { date, id } = monthNoteFor; const r = monthRec(date, id) || { status: 'present' };
+    setMonthDraft(prev => ({ ...prev, [date]: { ...(prev[date] || {}), [id]: { status: r.status, note: noteText.trim(), reason: noteReason } } }));
+    setMonthNoteFor(null);
   };
   const saveMonth = () => {
     const byDate = {};
-    monthChanges.forEach(({ date, id, status }) => {
+    monthChanges.forEach(({ date, id, status, note, reason }) => {
       const old = monthlyAttendance[date]?.[id] || {};
       const absent = status !== 'present';
-      (byDate[date] = byDate[date] || {})[id] = { ...old, status, note: absent ? (old.note || '') : '', reason: absent ? (old.reason || '') : '' };
+      (byDate[date] = byDate[date] || {})[id] = { ...old, status, note: absent ? (note || '') : '', reason: absent ? (reason || '') : '' };
     });
     Object.entries(byDate).forEach(([date, records]) => saveAttendanceDay(date, records));
     showToast(`출석 ${monthChanges.length}칸을 저장했습니다.`, 'success');
@@ -1912,7 +2065,7 @@ function AttendancePage() {
           {viewMode === 'daily' && <span className={`att-saved ${isSavedDay && !dirty ? 'is-saved' : ''}`}>{dirty ? `저장 안 됨 · ${changedIds.length}명 변경` : isSavedDay ? '저장됨' : '아직 입력 전'}</span>}
         </div>
         <div className="mode-switch" role="group" aria-label="보기">
-          <button type="button" aria-pressed={viewMode === 'daily'} onClick={() => { if (viewMode === 'daily' || !confirmLeaveMonth()) return; setMonthDraft({}); setMonthlyActiveCell(null); setViewMode('daily'); }}>일별 출석</button>
+          <button type="button" aria-pressed={viewMode === 'daily'} onClick={() => { if (viewMode === 'daily' || !confirmLeaveMonth()) return; setMonthDraft({}); setMonthNoteFor(null); setMonthlyActiveCell(null); setViewMode('daily'); }}>일별 출석</button>
           <button type="button" aria-pressed={viewMode === 'monthly'} onClick={() => setViewMode('monthly')}>월별 현황</button>
         </div>
       </div>
@@ -2012,17 +2165,18 @@ function AttendancePage() {
                   <tr key={s.id}>
                     <td className="sticky-col num">{s.number}</td><td className="sticky-col-name">{s.name}</td>
                     {monthDays.map(d => {
-                      const record = monthlyAttendance[d]?.[s.id];
-                      const saved = record?.status || null;
+                      const savedRec = monthlyAttendance[d]?.[s.id];
+                      const record = monthRec(d, s.id);
+                      const saved = savedRec?.status || null;
                       const pending = monthDraft[d]?.[s.id];
-                      const status = pending || saved;
-                      const isChanged = !!pending && pending !== saved;
+                      const status = record?.status || null;
+                      const isChanged = !!pending && (!savedRec || !sameAtt(savedRec, pending));
                       const isCellActive = monthlyActiveCell?.studentId === s.id && monthlyActiveCell?.date === d;
                       return (
                         <td key={d} className={`monthly-cell ${status || 'no-data'} ${isCellActive ? 'active' : ''} ${isChanged ? 'is-changed' : ''}`} title={[record?.reason, record?.note].filter(Boolean).join(' · ')} onClick={() => { if (isAdmin) setMonthlyActiveCell(isCellActive ? null : { studentId: s.id, date: d }); }} style={{ position: 'relative', cursor: isAdmin ? 'pointer' : 'default' }}>
                           <span className={`monthly-status ${status || 'no-data'}`}>{status ? STATUS_MAP[status].mark : '-'}</span>
-                          {record?.note && <span className="monthly-note-dot" aria-label={`사유: ${record.note}`} />}
-                          {isAdmin && isCellActive && (<div className="attendance-status-selector show monthly-selector" onClick={e => e.stopPropagation()}>{STATUS_KEYS.map(k => (<button key={k} type="button" className={`status-option ${status === k ? 'active' : ''}`} onClick={() => handleMonthlyStatus(s.id, d, k)}>{STATUS_MAP[k].label}</button>))}</div>)}
+                          {(record?.note || record?.reason) && status && status !== 'present' && <span className="monthly-note-dot" aria-label={`사유: ${[record.reason, record.note].filter(Boolean).join(' ')}`} />}
+                          {isAdmin && isCellActive && (<div className="attendance-status-selector show monthly-selector" onClick={e => e.stopPropagation()}>{STATUS_KEYS.map(k => (<button key={k} type="button" className={`status-option ${status === k ? 'active' : ''}`} onClick={() => handleMonthlyStatus(s.id, d, k)}>{STATUS_MAP[k].label}</button>))}{status && status !== 'present' && <button type="button" className="status-option monthly-note-btn" onClick={() => openMonthNote(d, s.id)}>✎ 사유 입력</button>}</div>)}
                         </td>
                       );
                     })}
@@ -2040,6 +2194,27 @@ function AttendancePage() {
               </div>
             </div>
           )}
+          {monthNoteFor && (() => {
+            const ns = students.find(x => x.id === monthNoteFor.id); const r = monthRec(monthNoteFor.date, monthNoteFor.id);
+            if (!ns || !r) return null;
+            return (
+              <div className="modal-overlay" {...overlayClose(() => setMonthNoteFor(null))}>
+                <div className="modal-content att-note-modal" role="dialog" aria-modal="true" aria-labelledby="att-mnote-title" onClick={e => e.stopPropagation()}>
+                  <div className="modal-header"><h3 id="att-mnote-title">{ns.name} · {+monthNoteFor.date.slice(5, 7)}/{+monthNoteFor.date.slice(8)} {STATUS_MAP[r.status].label} 사유</h3><button type="button" className="close-btn" aria-label="닫기" onClick={() => setMonthNoteFor(null)}>×</button></div>
+                  <div className="modal-body">
+                    <div className="att-reason-label" id="att-mreason-label">NEIS 구분</div>
+                    <div className="mode-switch att-reason-pick" role="group" aria-labelledby="att-mreason-label">
+                      {ATT_REASONS.map(x => <button key={x} type="button" aria-pressed={noteReason === x} onClick={() => setNoteReason(x)}>{x}</button>)}
+                    </div>
+                    <label htmlFor="att-mnote-text" className="att-reason-label">사유 (특기사항)</label>
+                    <textarea id="att-mnote-text" className="form-input" rows="3" autoFocus placeholder="예: 감기로 병원 진료" value={noteText} onChange={e => setNoteText(e.target.value)} />
+                    <div className="att-note-presets">{['질병', '병원 진료', '가정 사정', '체험학습', '늦잠'].map(p => <button key={p} type="button" className="chip-btn" onClick={() => setNoteText(p)}>{p}</button>)}</div>
+                  </div>
+                  <div className="modal-footer att-note-footer"><button type="button" className="btn btn-secondary" onClick={() => setMonthNoteFor(null)}>취소</button><button type="button" className="btn btn-primary" onClick={saveMonthNote}>확인</button></div>
+                </div>
+              </div>
+            );
+          })()}
           <NeisSummary students={students} monthlyAttendance={monthlyAttendance} monthDays={monthDays} year={monthYear.year} month={monthYear.month} />
         </div>
       )}
@@ -2164,7 +2339,7 @@ function LearningPage() {
       <div className="wk-top">
         <div className="wk-title">
           <h1 className="dash-headline">{activeActivity ? <>{activeActivity.title}</> : '오늘 할 활동을 정해요'}</h1>
-          {activeActivity && <span className={`lrn-type ${activeActivity.type === '수행평가' ? 'is-eval' : ''}`}>{activeActivity.type || '수행평가'}</span>}
+          {activeActivity && <span className={`lrn-type ${typeClass(activeActivity.type)}`}>{activeActivity.type || '수행평가'}</span>}
           {selectedAssignment && <button type="button" className="chip-btn" onClick={() => setSelectedAssignment(null)}>최신 활동으로</button>}
         </div>
         {isAdmin && !isEditingActivity && <button type="button" className="btn btn-primary" onClick={() => { closeForm(); setIsEditingActivity(true); }}><Icon name="plus" size={18} /> 활동 추가</button>}
@@ -2173,7 +2348,7 @@ function LearningPage() {
       {isAdmin && isEditingActivity && (
         <form className="lrn-form" onSubmit={e => { e.preventDefault(); saveActivity(); }}>
           <div className="mode-switch" role="group" aria-label="종류">
-            {['과제', '수행평가'].map(t => <button key={t} type="button" aria-pressed={tempActivityType === t} onClick={() => setTempActivityType(t)}>{t}</button>)}
+            {ACTIVITY_TYPES.map(t => <button key={t} type="button" aria-pressed={tempActivityType === t} onClick={() => setTempActivityType(t)}>{t}</button>)}
           </div>
           <input type="text" className="form-input" aria-label="활동 내용" value={tempActivityContent} onChange={e => setTempActivityContent(e.target.value)} placeholder="예: 수학 익힘책 34쪽" autoFocus />
           <div className="lrn-form-actions">
@@ -2234,7 +2409,7 @@ function LearningPage() {
                   <li key={a.id} className={`lrn-item ${isOpen ? 'is-open' : ''}`}>
                     <div className="lrn-row">
                       <button type="button" className="lrn-row-main" aria-expanded={isOpen} onClick={() => setSelectedAssignment(isOpen ? null : a.id)}>
-                        <span className={`lrn-type ${a.type === '수행평가' ? 'is-eval' : ''}`}>{a.type}</span>
+                        <span className={`lrn-type ${typeClass(a.type)}`}>{a.type}</span>
                         <span className="lrn-row-text">
                           <span className="lrn-row-title">{a.title}</span>
                           <span className="lrn-row-meta"><span className="num">{a.dueDate}</span>{remaining > 0 ? <span className="lrn-left">미제출 {remaining}명</span> : <span className="lrn-all">모두 제출</span>}</span>
@@ -2769,6 +2944,7 @@ function StudentApp() {
   const act = data?.canCheck ? data.activity : null;
   const pastActs = data?.canCheck ? (data.activities || []).slice(1) : [];
   const roster = data?.roster || [];
+  const checker = lunchChecker(roster); // 명단은 교실 서버에서만 와서 Vercel 학생 화면에는 안 나옴
   const doneOf = (a) => new Set([...(a?.done || []), ...(a ? Object.keys(sentDone[a.id] || {}) : [])]);
   const setMsgFor = (id, m) => setActMsg(prev => ({ ...prev, [id]: m }));
   const sendDone = async (a) => {
@@ -2860,8 +3036,9 @@ function StudentApp() {
         <div className="stu-who"><strong>{label.school}</strong><span>{label.klass} · {label.teacher}</span></div>
       </header>
       <div className="stu-hero">
-        <span className="page-date">{now.getMonth() + 1}월 {now.getDate()}일 {dayName}요일</span>
+        <WeatherStrip today={now} />
         <h1 className="dash-headline">{headline}</h1>
+        <BreakTimer schedule={today} />
       </div>
 
       {problem && !data && <div className="stu-msg">{problem}</div>}
@@ -2883,7 +3060,7 @@ function StudentApp() {
             <span className="wcard-meta"><strong className="num lrn-done">{doneSet.size}</strong> / <span className="num">{roster.length}</span>명 완료</span>
           </div>
           <div className="wcard-body">
-            <div className="stu-act-title"><span className={`lrn-type ${act.type === '수행평가' ? 'is-eval' : ''}`}>{act.type}</span><strong>{act.title}</strong></div>
+            <div className="stu-act-title"><span className={`lrn-type ${typeClass(act.type)}`}>{act.type}</span><strong>{act.title}</strong></div>
             {renderActBody(act)}
           </div>
         </section>
@@ -2901,7 +3078,7 @@ function StudentApp() {
                 return (
                   <li key={a.id} className={`stu-past-item ${isOpen ? 'is-open' : ''}`}>
                     <button type="button" className="stu-past-row" aria-expanded={isOpen} onClick={() => { setPick(null); setOpenPast(isOpen ? null : a.id); }}>
-                      <span className={`lrn-type ${a.type === '수행평가' ? 'is-eval' : ''}`}>{a.type}</span>
+                      <span className={`lrn-type ${typeClass(a.type)}`}>{a.type}</span>
                       <span className="stu-past-text"><strong>{a.title}</strong><span className="num">{a.date ? a.date.slice(5).replace('-', '/') : ''} · {done.size}/{roster.length}명 완료</span></span>
                       <span className="stu-past-bar"><span style={{ width: `${pct}%` }} className={pct === 100 ? 'is-done' : ''} /></span>
                       <span className="stu-past-chev" aria-hidden="true"><Icon name="chevron" size={16} /></span>
@@ -2978,7 +3155,7 @@ function StudentApp() {
       </>)}
 
       {tab === 'today' && <section className="wcard" aria-label="오늘의 급식">
-        <div className="wcard-head"><h2 className="wcard-title">오늘의 급식</h2>{lunch?.calories && <span className="wcard-meta num">{lunch.calories}</span>}</div>
+        <div className="wcard-head"><h2 className="wcard-title">오늘의 급식</h2>{checker && <span className="lunch-check">급식 검사: <strong>{checker.name}</strong></span>}{lunch?.calories && <span className="wcard-meta num">{lunch.calories}</span>}</div>
         <div className="wcard-body">
           {lunch === undefined ? <div className="wcard-empty">식단표를 불러오는 중이에요…</div>
             : lunchItems.length ? <ul className="lunch-list">{lunchItems.map((m, i) => <li key={i}>{m}</li>)}</ul>

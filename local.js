@@ -204,7 +204,7 @@ function getCurrentPeriod() {
   const periods = [
     { p: 1, start: 540, end: 580 }, { p: 2, start: 590, end: 630 },
     { p: 3, start: 650, end: 690 }, { p: 4, start: 700, end: 740 },
-    { p: 5, start: 790, end: 830 }, { p: 6, start: 840, end: 880 },
+    { p: 5, start: 750, end: 790 }, { p: 6, start: 840, end: 880 },
   ];
   const found = periods.find(p => time >= p.start && time <= p.end);
   return found ? found.p : null;
@@ -336,6 +336,46 @@ async function fetchSchoolHoliday(date = neisTodayString()) {
 }
 
 window.NeisApi = { fetchTodayLunch, fetchSchoolHoliday };
+
+/* ===================== 날씨 · 미세먼지 (Open-Meteo, 키 필요 없음) ===================== */
+const WEATHER_LAT = 35.1526, WEATHER_LON = 126.8895; // 광주 서구
+function weatherLook(code) {
+  if (code === 0) return ['☀️', '맑음'];
+  if (code <= 2) return ['🌤️', '구름 조금'];
+  if (code === 3) return ['☁️', '흐림'];
+  if (code === 45 || code === 48) return ['🌫️', '안개'];
+  if (code >= 51 && code <= 57) return ['🌦️', '이슬비'];
+  if ((code >= 61 && code <= 67) || (code >= 80 && code <= 82)) return ['🌧️', '비'];
+  if ((code >= 71 && code <= 77) || code === 85 || code === 86) return ['❄️', '눈'];
+  if (code >= 95) return ['⛈️', '뇌우'];
+  return ['🌡️', '날씨'];
+}
+// 환경부 기준 4단계 (pm10 / pm2.5)
+function dustGrade(v, cuts) {
+  if (v == null || isNaN(v)) return null;
+  const names = ['좋음', '보통', '나쁨', '매우나쁨'];
+  const i = v <= cuts[0] ? 0 : v <= cuts[1] ? 1 : v <= cuts[2] ? 2 : 3;
+  return { level: i, label: names[i], value: Math.round(v) };
+}
+async function fetchWeather() {
+  const opt = { signal: AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined };
+  const w = fetch(`https://api.open-meteo.com/v1/forecast?latitude=${WEATHER_LAT}&longitude=${WEATHER_LON}&current=temperature_2m,weather_code&timezone=Asia%2FSeoul`, opt).then(r => r.ok ? r.json() : Promise.reject(r.status));
+  const a = fetch(`https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${WEATHER_LAT}&longitude=${WEATHER_LON}&current=pm10,pm2_5&timezone=Asia%2FSeoul`, opt).then(r => r.ok ? r.json() : Promise.reject(r.status));
+  const [wr, ar] = await Promise.allSettled([w, a]);
+  const out = {};
+  if (wr.status === 'fulfilled' && wr.value.current) {
+    const [icon, label] = weatherLook(wr.value.current.weather_code);
+    out.icon = icon; out.label = label; out.temp = Math.round(wr.value.current.temperature_2m);
+  }
+  if (ar.status === 'fulfilled' && ar.value.current) {
+    out.pm10 = dustGrade(ar.value.current.pm10, [30, 80, 150]);
+    out.pm25 = dustGrade(ar.value.current.pm2_5, [15, 35, 75]);
+  }
+  return (out.icon || out.pm10) ? out : null;
+}
+
+window.WeatherApi = { fetchWeather };
+
 
 /* ===================== 구글 캘린더 일정 읽기 (공개 달력 + Google API 키) ===================== */
 // 설정 칸에는 ID, 공유 주소, <iframe> 코드 무엇을 넣어도 달력 ID만 뽑아냄
